@@ -18,6 +18,9 @@ asserted that was not executed. Where something could not be done, it says so pl
 | GitHub push | GitHub API | ✅ https://github.com/Om9592/jan-drishti (public, `main`) |
 | Vercel deployment | Vercel API | ✅ READY — https://jan-drishti-navy.vercel.app |
 | Live route check | 29 `curl` requests to production | ✅ all 200 |
+| Integration tests on live site | `BASE_URL=https://jan-drishti-navy.vercel.app npm test` | ✅ 12/12 pass |
+| Browser check on live site | Playwright, home + report, console + failed requests | ✅ clean |
+| Canonical / OG / sitemap | fetched from production | ✅ all use `https://jan-drishti-navy.vercel.app` |
 
 ## 2. Implemented (working code, no external accounts needed to run)
 

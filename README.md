@@ -259,7 +259,12 @@ Two honest notes:
 npm run build
 npm start &            # serves http://127.0.0.1:3000
 npm test               # 12 integration tests
+
+# or run the same suite against the live deployment
+BASE_URL=https://jan-drishti-navy.vercel.app npm test
 ```
+
+Both runs are green: 12/12 locally and 12/12 against production.
 
 Covered: every public route renders, detail pages expose sources and structured data,
 404s, security headers, robots/sitemap, health/capability reporting, submission validation
