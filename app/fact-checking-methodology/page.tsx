@@ -163,11 +163,20 @@ export default function MethodologyPage() {
         <ul>
           <li>
             <strong>Evidence retrieval:</strong>{" "}
-            {caps.search ? "configured — searches run against a live search provider." : "not configured — no external evidence is retrieved. The platform will never simulate a search."}
+            live. Every claim run searches Google News, Bing News, our own trusted wire of Indian publishers and
+            Wikipedia, and de-duplicates against syndicated copies.{" "}
+            {caps.search
+              ? "A paid search provider is also configured and adds a fourth index."
+              : "No paid search provider is configured; the keyless retrievers carry the whole evidence step, so nothing is simulated."}
           </li>
           <li>
             <strong>AI research assistance:</strong>{" "}
-            {caps.ai ? "configured — used only for drafting; verdicts remain human-issued." : "not configured — research files are assembled manually by the desk."}
+            {caps.ai
+              ? "configured — the model extracts claims, cross-checks the retrieved sources and recommends a verdict in a single run that takes seconds, but the verdict remains human-issued."
+              : "the pipeline is built and runs, but no model key is installed on this deployment, so no AI synthesis happens — the desk gets the evidence file and writes the finding itself."}{" "}
+            A machine recommendation is never published: an editor signs every verdict, and a verdict of true or false
+            is blocked unless at least three independent publishers — or one primary government or court record —
+            support it.
           </li>
           <li>
             <strong>Screenshot OCR:</strong>{" "}

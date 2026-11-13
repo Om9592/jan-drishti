@@ -12,6 +12,26 @@ function env(key: string): string | undefined {
   return value;
 }
 
+/**
+ * One key is enough. Every provider below speaks the OpenAI-compatible
+ * /chat/completions shape, so `AI_PROVIDER=gemini` plus `AI_API_KEY=…` is all
+ * the desk needs; explicit AI_BASE_URL / AI_MODEL still win.
+ */
+const AI_PRESETS = {
+  openai: { name: "openai", baseUrl: "https://api.openai.com/v1", model: "gpt-4o-mini" },
+  gemini: {
+    name: "gemini",
+    baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
+    model: "gemini-2.0-flash",
+  },
+  groq: { name: "groq", baseUrl: "https://api.groq.com/openai/v1", model: "llama-3.3-70b-versatile" },
+  openrouter: { name: "openrouter", baseUrl: "https://openrouter.ai/api/v1", model: "google/gemini-2.0-flash-001" },
+  deepseek: { name: "deepseek", baseUrl: "https://api.deepseek.com/v1", model: "deepseek-chat" },
+} as const;
+
+const AI_PRESET =
+  AI_PRESETS[(env("AI_PROVIDER") ?? "openai").toLowerCase() as keyof typeof AI_PRESETS] ?? AI_PRESETS.openai;
+
 const firebaseProjectId = env("FIREBASE_PROJECT_ID") ?? env("NEXT_PUBLIC_FIREBASE_PROJECT_ID");
 const firebaseClientKey =
   env("NEXT_PUBLIC_FIREBASE_API_KEY") ?? env("FIREBASE_API_KEY");
@@ -36,8 +56,9 @@ export const config = {
   },
   ai: {
     apiKey: env("AI_API_KEY") ?? env("OPENAI_API_KEY"),
-    baseUrl: (env("AI_BASE_URL") ?? "https://api.openai.com/v1").replace(/\/$/, ""),
-    model: env("AI_MODEL") ?? "gpt-4o-mini",
+    baseUrl: (env("AI_BASE_URL") ?? AI_PRESET.baseUrl).replace(/\/$/, ""),
+    model: env("AI_MODEL") ?? AI_PRESET.model,
+    provider: AI_PRESET.name,
     /** Optional secondary model used only for translation drafting. */
     translationModel: env("AI_TRANSLATION_MODEL"),
   },
@@ -93,6 +114,8 @@ export function capabilities() {
     firebaseClient: isFirebaseConfigured(),
     ai: isAiConfigured(),
     search: isSearchConfigured(),
+    /** Keyless evidence retrieval (Google News RSS, Bing News RSS, wire, Wikipedia). */
+    evidence: true,
     ocr: Boolean(config.ocr.provider),
     newsApi: Boolean(config.newsApi.key),
     demo: isDemoMode(),

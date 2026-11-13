@@ -173,6 +173,14 @@ export interface ResearchReport {
   steps: ResearchStep[];
   /** Always true for machine output. Cleared only by a human editor on approval. */
   preliminary: true;
+  /** Which retrievers produced evidence for this run (google-news, trusted-wire, tavily…). */
+  sourcesUsed?: string[];
+  /** Distinct publishers in the evidence set — the corroboration count. */
+  independentSources?: number;
+  /** Wall-clock time the pipeline took, so "minutes" is a measured claim. */
+  durationMs?: number;
+  /** Where the evidence came from: paid search keys, keyless retrievers, or both. */
+  searchMode?: "keyed" | "keyless" | "both" | "none";
 }
 
 export interface FactCheck {

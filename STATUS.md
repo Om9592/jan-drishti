@@ -3,6 +3,59 @@
 Written 13 November 2026. Everything below was verified in this workspace; nothing is
 asserted that was not executed. Where something could not be done, it says so plainly.
 
+## Phase D — freelance contributors, real images, AI multi-source fact-check (13 Nov 2026)
+
+### Verified by execution in this session
+
+| Check | Method | Result |
+| --- | --- | --- |
+| Contributor application → approval → account | live Firestore + Auth via `node` script against a local build | ✅ submission stored, admin PATCH created the Auth user, custom claim `role: contributor`, password-set mail sent |
+| Contributor cannot self-publish | POST `/api/articles` as a contributor with `status: "published"` | ✅ stored as `review`, byline forced to the filing account, `featured/underreported/groundReport` cleared |
+| Unapproved story is invisible | GET `/article/<slug>` before approval | ✅ 404; after admin publish → 200 with the contributor's byline |
+| Ownership guard | contributor posts with another author's article id | ✅ 403 / rejected; the desk page never lists another writer's copy |
+| Contributor desk | `/contribute/desk`, `/contribute/desk/new`, `/contribute/[id]` | ✅ 200 as contributor, 307 to `/login` as anonymous, mobile 390 px clean |
+| Admin queue | `/admin/contributors` as admin | ✅ pending pitch, approve/decline, "awaiting approval" queue with one-click publish, roster |
+| Wire images | home / latest / india / politics / economy / education / health / states / science / environment / technology | ✅ 14 wire cards per page, 2–10 publisher thumbnails each, 0 broken images (Playwright `naturalWidth` check) |
+| Keyless evidence retrieval | POST `/api/research` with no AI or search keys | ✅ 17 results from 4 independent publishers in **0.53 s**; steps show `search done`, `corroborate done` |
+| Independence gate | same run, `independentSources` | ✅ counted and surfaced; verdict held at `unverified` with no AI key, and a model verdict of true/false is downgraded below 3 publishers |
+| Type check / build | `npx tsc --noEmit`, `npm run build` | ✅ clean |
+
+### New in Phase D
+
+- **Freelance contributor programme**: `/contribute` (public pitch form, no account
+  needed), `/admin/contributors` (approve → creates the account, grants the
+  `contributor` claim, mails a password-set link; one-click publish for contributed
+  stories), `/contribute/desk` (own drafts only, stats, status explained),
+  `/contribute/desk/new` and `/contribute/desk/[id]` (editor with no publish button,
+  read-only status and byline). `POST /api/articles` forces byline + `review` for
+  contributors and refuses edits to anyone else's story.
+- **Wire images and section coverage**: publisher thumbnails now parse
+  (`media:content`, `media:thumbnail`, `enclosure`, `<img>`) and render hotlinked
+  with a `Photo: <Publisher>` credit; `/science`, `/environment`, `/technology`
+  added; `/latest` and `/states` merge the wire; each section fetches only its own
+  feeds with a 21-day window, so no section renders empty.
+- **AI multi-source fact-check**: keyless evidence layer (Google News RSS, Bing News
+  RSS, trusted wire, Wikipedia) that always runs; a hard 3-independent-source
+  corroboration gate before any yes/no recommendation; provider presets so one
+  `AI_API_KEY` (`AI_PROVIDER=gemini|groq|openai|openrouter|deepseek`) enables
+  synthesis; `sourcesUsed` / `independentSources` / `durationMs` recorded and shown
+  in the review screen.
+- **Bugs fixed on the way**: categories/sources/submissions/corrections returned
+  Firestore `Timestamp` objects to Client Components, which crashed
+  `/admin/articles/new` and `/contribute/desk/new` with a 500 — all store reads now
+  deep-convert to plain JSON; `categorySlug` could be `undefined` (Firestore rejects
+  it) when a section arrived as a slug; `articleSchema` rejected `imageUrl: null` and
+  a missing `authorId`.
+
+### Still needs the owner's accounts (cannot be done from code)
+
+| Gap | What is blocked | What fixes it |
+| --- | --- | --- |
+| AI synthesis | No model key on the deployment, so the model never runs; the desk gets the evidence file only | Add `AI_API_KEY` (+ `AI_PROVIDER`) in Vercel → the same run then cross-checks sources and recommends a verdict in seconds |
+| Composite indexes | 14 queries fall back to in-memory sorting past ~500 docs | `firebase deploy --only firestore:indexes` or create them in the console |
+| Image uploads | Storage bucket needs the Blaze plan | Upgrade the Firebase project, then set the bucket |
+| Google sign-in | Google IdP is disabled for the project | Enable it in Firebase console → Authentication → Sign-in method |
+
 ## 1. Verified in this session
 
 | Check | Command / method | Result |

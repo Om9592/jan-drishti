@@ -46,10 +46,32 @@ export default async function AdminFactCheckReviewPage({
 
           <div className="border border-rule bg-white p-4">
             <h3 className="font-serif text-[1.05rem] text-navy">Evidence file ({allEvidence.length})</h3>
+            {fc.research && (
+              <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 border-y border-rule bg-paper-shade px-3 py-2 font-sans text-[0.66rem] text-ink-soft">
+                <span>
+                  <span className="uppercase tracking-[0.1em] text-ink-muted">Independent publishers</span>{" "}
+                  <strong className="text-ink">{fc.research.independentSources ?? 0}</strong>
+                  <span className="text-ink-muted"> (3+ or one primary record required for a yes/no verdict)</span>
+                </span>
+                <span>
+                  <span className="uppercase tracking-[0.1em] text-ink-muted">Retrievers</span>{" "}
+                  {(fc.research.sourcesUsed ?? []).join(", ") || "none"}
+                </span>
+                <span>
+                  <span className="uppercase tracking-[0.1em] text-ink-muted">Gathered in</span>{" "}
+                  {fc.research.durationMs ? `${(fc.research.durationMs / 1000).toFixed(1)}s` : "—"}
+                </span>
+                <span>
+                  <span className="uppercase tracking-[0.1em] text-ink-muted">Synthesis</span>{" "}
+                  {fc.research.model ? `AI · ${fc.research.model}` : "manual — no AI key"}
+                </span>
+              </div>
+            )}
             {allEvidence.length === 0 ? (
               <p className="mt-2 font-sans text-[0.8rem] leading-relaxed text-ink-muted">
-                No evidence was attached. Without evidence the only defensible verdict is UNVERIFIED. Configure a
-                search provider (TAVILY_API_KEY / BRAVE_SEARCH_API_KEY / SERPER_API_KEY) or add sources manually.
+                No evidence was attached. Without evidence the only defensible verdict is UNVERIFIED. The keyless
+                retrievers (Google News RSS, Bing News RSS, the trusted wire, Wikipedia) run without any credentials;
+                if they returned nothing, add sources manually or configure a paid search provider.
               </p>
             ) : (
               <ul className="mt-3 space-y-3">

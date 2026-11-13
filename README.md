@@ -144,16 +144,33 @@ compound query are in `firestore.indexes.json`.
 
 ```
 submission ─► claim extraction ─► entity identification ─► query generation
-           ─► evidence retrieval (configured providers only)
+           ─► evidence retrieval  (Google News + Bing News + trusted wire + Wikipedia)
            ─► source classification (gov / primary / journalism / research / social)
-           ─► supporting vs contradicting comparison ─► missing context
-           ─► PRELIMINARY draft (never publishable) ─► editor review ─► published verdict
+           ─► INDEPENDENCE GATE: 3+ distinct publishers, or one primary record
+           ─► supporting vs contradicting cross-check ─► missing context
+           ─► PRELIMINARY verdict + evidence file ─► editor review ─► published verdict
 ```
 
-* Providers: any OpenAI-compatible chat completion (`AI_API_KEY`, `AI_BASE_URL`,
-  `AI_MODEL`) and Tavily / Brave / Serper for search.
-* **No provider ⇒ no invented evidence.** The report records the step as
-  `unavailable`, recommends `UNVERIFIED`, and the UI says so.
+* **The evidence step needs no credentials.** `lib/research/keyless.ts` queries
+  Google News RSS, Bing News RSS, the trusted wire already ingested for the site,
+  and Wikipedia — in parallel, de-duplicated against syndicated copies. A claim run
+  typically returns 10–20 results from 4–8 publishers in **under two seconds**;
+  the whole pipeline including a model call finishes in well under a minute.
+* **Corroboration floor.** A recommendation of `verified_true` or `false` is
+  downgraded to `unverified` unless the evidence set contains at least three
+  independent publishers or one primary government/court record. This is enforced
+  in code, not just in the prompt (`lib/research/engine.ts`, step `corroborate`).
+* **AI synthesis needs exactly one key.** Any OpenAI-compatible provider works:
+  `AI_PROVIDER=gemini|groq|openai|openrouter|deepseek` plus `AI_API_KEY`. The
+  preset fills in the base URL and a default model. Without a key the pipeline
+  still runs and hands the editor a complete evidence file — it just does not
+  write the comparison, and the report says so.
+* **AI never publishes.** Machine output is `preliminary: true`; only
+  `publishFactCheck()` (role-gated, human) can issue a verdict.
+* Paid search (Tavily / Brave / Serper) is optional and adds a fourth index; the
+  report records which retrievers actually produced evidence
+  (`sourcesUsed`), how many independent publishers were found
+  (`independentSources`), and how long the run took (`durationMs`).
 * Verdicts: `verified_true`, `false`, `misleading`, `unverified`, `outdated`,
   `disputed`. Confidence: low / medium / high.
 * Every published report carries: original claim, verdict, explanation, context,
@@ -171,7 +188,9 @@ reporting and then fill with the **wire**: headlines pulled live from trusted pu
 
 | | |
 | --- | --- |
-| Publishers | The Hindu (national, business, education, health, states), Mint (news, politics, economy), NDTV (top stories), Reserve Bank of India (press releases) |
+| Publishers | The Hindu (national, business, education, health, states, cities, science), Hindustan Times (India, technology), Times of India, NDTV (top stories, cities), Mint (news, politics, economy), Economic Times (politics), BusinessLine, Mongabay India, Reserve Bank of India — 21 feeds |
+| Images | Publisher thumbnails are hotlinked from the publisher's own CDN with a visible "Photo: &lt;Publisher&gt;" credit (`media:content`, `media:thumbnail`, `enclosure`, `<img>`). `WIRE_IMAGES=off` disables them. |
+| Sections | Each section page fetches only its own feeds, with a 21-day window, so Education / States / Science are never left blank. |
 | Module | `lib/ingestion/wire.ts` — RSS fetched server-side, `next: { revalidate: 600 }` |
 | Refresh | Every ten minutes, on demand; a cold first render warms the cache |
 | What is stored | Headline, ≤240-character attributed summary, publisher, timestamp, canonical URL. **Never** full text and **never** publisher photography |
