@@ -12,15 +12,6 @@
 const args = process.argv.slice(2);
 const urlIndex = args.indexOf("--url");
 
-function loadEnvLocal() {
-  try {
-    const fs = process.env.NODE_ENV === "test" ? null : require("node:fs");
-    return fs;
-  } catch {
-    return null;
-  }
-}
-
 async function main() {
   const site =
     (urlIndex > -1 ? args[urlIndex + 1] : undefined) ||
