@@ -25,8 +25,8 @@ human editor.
 | Security rules for Firestore + Storage, indexes, server-side validation, rate limiting, audit logging | ✅ in repo |
 | SEO: metadata, OG/Twitter, JSON-LD (NewsArticle, ClaimReview), sitemap, robots | ✅ implemented |
 | Integration tests (route, validation, research→publish gate) | ✅ `npm test` |
-| GitHub push | ⚠️ not performed — no GitHub access was authorised in this session (see §10) |
-| Vercel deployment | ⚠️ see §10 for the exact status of this build |
+| GitHub repository | ✅ https://github.com/Om9592/jan-drishti (public, `main`) |
+| Vercel deployment | ✅ production live at https://jan-drishti-navy.vercel.app (see §10) |
 
 When **no Firebase credentials** are present the app runs on a **labelled sample store**:
 every page displays a "Preview build" banner, sample records carry a visible
@@ -224,20 +224,34 @@ fact-check desk still works — it just does everything manually, and says so on
 
 ## 10. Git / GitHub / deployment status
 
-**GitHub:** a local Git repository with meaningful commit history is included in this
-workspace (`git log`), but **no push was performed** — GitHub was not authorised in this
-session, and a push cannot be claimed without it. To publish:
+**GitHub — done.** The repository is public at
+<https://github.com/Om9592/jan-drishti>, `main` branch, 137 files, no secrets committed
+(`.env.example` is the only env file; `.gitignore` excludes `.env*`, service-account JSON
+and `.next`).
 
-```bash
-git remote add origin git@github.com:<you>/jan-drishti.git
-git push -u origin main
-```
+**Vercel — done.** Project `jan-drishti`
+(`prj_4XJpM7VVGcAFN0NJiFSAIPhC2Lk8`, team `team_DfPASZBxYBLg32Ro69uSGpvi`) is connected to
+the GitHub repo, so every push to `main` redeploys.
 
-**Vercel:** see `DEPLOYMENT.md` for the exact, verified status of this build plus
-step-by-step instructions (CLI and dashboard), including environment variables,
-Firebase authorised domains and post-deploy checks.
+| | |
+| --- | --- |
+| Production URL | <https://jan-drishti-navy.vercel.app> |
+| Git branch URL | `jan-drishti-git-main-ombuisness5-2169.vercel.app` |
+| Environment | Hobby, Node 26.x, region `iad1`, Next.js preset |
+| Env vars set | `NEXT_PUBLIC_SITE_URL`, `IP_HASH_SALT` (sensitive) |
+| Cron | `/api/cron/ingest` daily 21:30 UTC (Hobby rejects sub-daily schedules) |
+| Verified after deploy | 29 routes return 200, `/api/health` returns 200 |
 
----
+Two honest notes:
+
+1. The **team's other hostnames** (`jan-drishti-ombuisness5-2169.vercel.app`,
+   `*.vercel.app` deployment URLs) sit behind Vercel **Deployment Protection**, so an
+   anonymous visitor gets the Vercel login page there. `jan-drishti-navy.vercel.app` is the
+   unprotected production alias and serves the site normally. Turn protection off project-wide
+   under Settings → Deployment Protection if you want the generated URLs public too.
+2. The site currently runs in **preview mode on Vercel** (`/api/health` → `"backend":
+   "sample"`) because no Firebase credentials are set in the Vercel project yet. Add them and
+   redeploy to switch to Firestore.
 
 ## 11. Testing
 

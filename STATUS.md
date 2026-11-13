@@ -14,7 +14,10 @@ asserted that was not executed. Where something could not be done, it says so pl
 | Browser console | Playwright on 9 routes | ✅ no page errors, no failed requests |
 | Responsive overflow | 11 routes × 1440/1024/768/390/360 px | ✅ `scrollWidth == clientWidth` everywhere |
 | Visual review | full-page screenshots, desktop + 390 px | ✅ masthead, nav, hero, article, fact-check report, admin desk |
-| Git history | `git log` | ✅ 2 commits, 135 tracked files, secrets excluded |
+| Git history | `git log` | ✅ 5 commits, 137 tracked files, secrets excluded |
+| GitHub push | GitHub API | ✅ https://github.com/Om9592/jan-drishti (public, `main`) |
+| Vercel deployment | Vercel API | ✅ READY — https://jan-drishti-navy.vercel.app |
+| Live route check | 29 `curl` requests to production | ✅ all 200 |
 
 ## 2. Implemented (working code, no external accounts needed to run)
 
@@ -74,12 +77,6 @@ asserted that was not executed. Where something could not be done, it says so pl
 
 ## 6. Not implemented — stated rather than implied
 
-- **GitHub push**: no GitHub credentials or connector were authorised in this session, so
-  the repository exists only locally. `DEPLOYMENT.md` has the two commands to publish it.
-- **Vercel deployment**: not created. The connected Vercel account is on the Hobby plan and
-  this session had neither a Git-backed repository for Vercel to pull nor a token to upload
-  source; the connector cannot transmit this source tree. `DEPLOYMENT.md` lists the exact
-  dashboard and CLI paths, including env vars and post-deploy checks.
 - **Payments / subscriptions**: none. Newsletter capture stores an address only.
 - **Newsletter delivery**: no ESP integration; the endpoint records consent and nothing else.
 - **Translation editor UI**: schema supports linked EN/HI pairs; managing them is manual.
@@ -87,6 +84,9 @@ asserted that was not executed. Where something could not be done, it says so pl
   contract.
 - **Real newsroom content**: none, by design. Production shows honest empty states.
 - **Perfect objectivity**: not claimed anywhere in the product or these documents.
+- **Public access to every hostname**: Vercel Deployment Protection still covers the
+  generated `*.vercel.app` deployment URLs; the `jan-drishti-navy.vercel.app` production
+  alias is public. Disabling protection is a dashboard toggle the connector does not expose.
 
 ## 7. Where to look
 

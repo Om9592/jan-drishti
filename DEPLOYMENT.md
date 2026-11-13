@@ -1,20 +1,25 @@
 # Deployment
 
-Two things are true of this workspace and worth stating before any instructions:
+## Status: deployed
 
-1. **The application builds and runs.** `npm run build`, `npm start` and the 12
-   integration tests all pass here, and the running preview you can open is that exact
-   production build.
-2. **No Vercel deployment was created from this session, and no GitHub push was made.**
-   The Vercel account connected to this conversation (`ombuisness5@gmail.com`, team
-   `team_DfPASZBxYBLg32Ro69uSGpvi`, Hobby plan) exposes project/deployment management
-   tools, but a deployment needs either (a) a GitHub repository Vercel can pull from, or
-   (b) the full source uploaded as deployment files. No GitHub repository is connected to
-   this session, and no Vercel token is available to the sandbox, so neither path could be
-   completed. Rather than report a deployment that does not exist, it is left for you with
-   the exact steps below — roughly five minutes of work.
+| | |
+| --- | --- |
+| GitHub | <https://github.com/Om9592/jan-drishti> — public, `main` |
+| Vercel project | `jan-drishti` (`prj_4XJpM7VVGcAFN0NJiFSAIPhC2Lk8`) |
+| **Live production URL** | **<https://jan-drishti-navy.vercel.app>** |
+| Build | READY, Next.js preset, Node 26.x, region `iad1` |
+| Verified | 29 routes → 200, `/api/health` → 200, sitemap + robots served |
+| Cron | `/api/cron/ingest` daily at 21:30 UTC |
+| Env vars | `NEXT_PUBLIC_SITE_URL`, `IP_HASH_SALT` |
 
----
+Pushes to `main` redeploy automatically. The `*.vercel.app` per-deployment hostnames are
+covered by Vercel Deployment Protection (they redirect to a Vercel login); the
+`jan-drishti-navy.vercel.app` alias is the public one. Disable protection in
+**Settings → Deployment Protection** if you want every URL open.
+
+The rest of this file is the manual checklist for the steps that still need your accounts.
+
+
 
 ## Option A — GitHub → Vercel (recommended, gives you the Git URL you asked for)
 
