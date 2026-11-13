@@ -68,7 +68,9 @@ export function ArticleCard({
   const linkProps = external
     ? { href, target: "_blank", rel: "noopener noreferrer nofollow" }
     : { href };
-  const showArtwork = showImage && !external;
+  // Own reporting keeps the typographic plate when it has no picture; a wire
+  // item only gets a picture slot when the publisher's feed gave us one.
+  const showArtwork = showImage && (!external || Boolean(article.imageUrl));
   const minutes = article.readingMinutes ?? 4;
   // Some feeds repeat the headline as the description — never print it twice.
   const dek = (article.summary ?? "").trim() === article.title.trim() ? "" : article.summary;

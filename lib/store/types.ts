@@ -28,6 +28,8 @@ export interface ArticleQuery {
   underreportedOnly?: boolean;
   groundReportOnly?: boolean;
   kind?: ArticleKind;
+  /** Restrict to one author — used by the freelance contributor desk. */
+  authorId?: string;
   limit?: number;
   page?: number;
   perPage?: number;

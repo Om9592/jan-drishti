@@ -34,6 +34,7 @@ export default async function ProfilePage() {
     : [];
 
   const isStaff = viewer.role === "editor" || viewer.role === "admin" || viewer.role === "researcher";
+  const isContributor = viewer.role === "contributor";
 
   return (
     <div className="container-editorial py-9">
@@ -50,6 +51,11 @@ export default async function ProfilePage() {
           </p>
         </div>
         <div className="flex gap-2">
+          {isContributor && (
+            <Link href="/contribute/desk" className="btn-primary">
+              {t("nav.contributeDesk")}
+            </Link>
+          )}
           {isStaff && (
             <Link href="/admin" className="btn-outline">
               {t("nav.admin")}

@@ -27,20 +27,38 @@ export interface WireFeed {
 }
 
 export const WIRE_FEEDS: WireFeed[] = [
+  // India
   { id: "th-national", publisher: "The Hindu", url: "https://www.thehindu.com/news/national/feeder/default.rss", categorySlug: "india" },
+  { id: "ht-india", publisher: "Hindustan Times", url: "https://www.hindustantimes.com/feeds/rss/india-news/rssfeed.xml", categorySlug: "india" },
+  { id: "ndtv-top", publisher: "NDTV", url: "https://feeds.feedburner.com/ndtvnews-top-stories", categorySlug: "india" },
+  { id: "mint-news", publisher: "Mint", url: "https://www.livemint.com/rss/news", categorySlug: "india" },
+  // Politics
+  { id: "et-politics", publisher: "Economic Times", url: "https://economictimes.indiatimes.com/news/politics-and-nation/rssfeeds/1052732854.cms", categorySlug: "politics" },
+  { id: "mint-politics", publisher: "Mint", url: "https://www.livemint.com/rss/politics", categorySlug: "politics" },
+  // Economy
   { id: "th-business", publisher: "The Hindu", url: "https://www.thehindu.com/business/feeder/default.rss", categorySlug: "economy" },
+  { id: "businessline", publisher: "BusinessLine", url: "https://www.thehindubusinessline.com/feeder/default.rss", categorySlug: "economy" },
+  { id: "mint-economy", publisher: "Mint", url: "https://www.livemint.com/rss/economy", categorySlug: "economy" },
+  { id: "rbi-press", publisher: "Reserve Bank of India", url: "https://rbi.org.in/pressreleases_rss.xml", categorySlug: "economy" },
+  // Education / health / states
   { id: "th-education", publisher: "The Hindu", url: "https://www.thehindu.com/education/feeder/default.rss", categorySlug: "education" },
   { id: "th-health", publisher: "The Hindu", url: "https://www.thehindu.com/sci-tech/health/feeder/default.rss", categorySlug: "health" },
   { id: "th-states", publisher: "The Hindu", url: "https://www.thehindu.com/news/states/feeder/default.rss", categorySlug: "states" },
-  { id: "mint-news", publisher: "Mint", url: "https://www.livemint.com/rss/news", categorySlug: "india" },
-  { id: "mint-politics", publisher: "Mint", url: "https://www.livemint.com/rss/politics", categorySlug: "politics" },
-  { id: "mint-economy", publisher: "Mint", url: "https://www.livemint.com/rss/economy", categorySlug: "economy" },
-  { id: "ndtv-top", publisher: "NDTV", url: "https://feeds.feedburner.com/ndtvnews-top-stories", categorySlug: "india" },
-  { id: "rbi-press", publisher: "Reserve Bank of India", url: "https://rbi.org.in/pressreleases_rss.xml", categorySlug: "economy" },
+  { id: "ndtv-cities", publisher: "NDTV", url: "https://feeds.feedburner.com/ndtvnews-cities-news", categorySlug: "states" },
+  { id: "th-cities", publisher: "The Hindu", url: "https://www.thehindu.com/news/cities/feeder/default.rss", categorySlug: "states" },
+  // Environment / science / technology
+  { id: "mongabay", publisher: "Mongabay India", url: "https://india.mongabay.com/feed/", categorySlug: "environment" },
+  { id: "th-environment", publisher: "The Hindu", url: "https://www.thehindu.com/sci-tech/energy-and-environment/feeder/default.rss", categorySlug: "environment" },
+  { id: "th-science", publisher: "The Hindu", url: "https://www.thehindu.com/sci-tech/feeder/default.rss", categorySlug: "science" },
+  { id: "th-science-deep", publisher: "The Hindu", url: "https://www.thehindu.com/sci-tech/science/feeder/default.rss", categorySlug: "science" },
+  { id: "ht-tech", publisher: "Hindustan Times", url: "https://www.hindustantimes.com/feeds/rss/technology/rssfeed.xml", categorySlug: "technology" },
+  { id: "toi-top", publisher: "Times of India", url: "https://timesofindia.indiatimes.com/rssfeeds/-2128936835.cms", categorySlug: "india" },
 ];
 
-const MAX_PER_FEED = 12;
+const MAX_PER_FEED = 14;
 const MAX_AGE_DAYS = 6;
+/** Section pages tolerate older items rather than showing an empty page. */
+const SECTION_MAX_AGE_DAYS = 21;
 
 function decode(input: string): string {
   return input
@@ -63,6 +81,29 @@ interface ParsedItem {
   link: string;
   summary: string;
   publishedAt: string | null;
+  imageUrl: string | null;
+}
+
+/**
+ * Wire thumbnails are hotlinked from the publisher's own CDN with visible
+ * attribution — never re-uploaded, never presented as our photography.
+ * Set WIRE_IMAGES=off to render text-only cards instead.
+ */
+const WIRE_IMAGES_ENABLED = process.env.WIRE_IMAGES !== "off";
+
+function pickImage(block: string): string | null {
+  const patterns = [
+    /<media:content[^>]*url=["']([^"']+)["']/i,
+    /<media:thumbnail[^>]*url=["']([^"']+)["']/i,
+    /<enclosure[^>]*type=["']image\/[^"']*["'][^>]*url=["']([^"']+)["']/i,
+    /<enclosure[^>]*url=["']([^"']+)["'][^>]*type=["']image\/[^"']*["']/i,
+    /<img[^>]*src=["']([^"']+)["']/i,
+  ];
+  for (const pattern of patterns) {
+    const match = block.match(pattern);
+    if (match?.[1]) return decode(match[1]).trim();
+  }
+  return null;
 }
 
 function parse(xml: string): ParsedItem[] {
@@ -79,12 +120,13 @@ function parse(xml: string): ParsedItem[] {
           240,
         ),
         publishedAt: parsedDate && !Number.isNaN(parsedDate.getTime()) ? parsedDate.toISOString() : null,
+        imageUrl: WIRE_IMAGES_ENABLED ? pickImage(block) : null,
       };
     })
     .filter((item) => item.title.length > 12 && /^https?:\/\//.test(item.link));
 }
 
-async function fetchFeed(feed: WireFeed): Promise<Article[]> {
+async function fetchFeed(feed: WireFeed, maxAgeDays = MAX_AGE_DAYS): Promise<Article[]> {
   try {
     const response = await fetch(feed.url, {
       // The data cache refreshes every ten minutes, so the page stays current
@@ -100,7 +142,7 @@ async function fetchFeed(feed: WireFeed): Promise<Article[]> {
       console.warn(`[wire] ${feed.id} returned ${response.status}`);
       return [];
     }
-    const cutoff = Date.now() - MAX_AGE_DAYS * 86_400_000;
+    const cutoff = Date.now() - maxAgeDays * 86_400_000;
     return parse(await response.text())
       .slice(0, MAX_PER_FEED)
       .filter((item) => !item.publishedAt || new Date(item.publishedAt).getTime() >= cutoff)
@@ -118,7 +160,8 @@ async function fetchFeed(feed: WireFeed): Promise<Article[]> {
           categorySlug: feed.categorySlug,
           authorId: "wire",
           authorName: feed.publisher,
-          imageUrl: null,
+          imageUrl: item.imageUrl,
+          imageCredit: item.imageUrl ? `Photo: ${feed.publisher}` : undefined,
           status: "published" as const,
           kind: "external" as const,
           publishedAt,
@@ -145,8 +188,8 @@ function canonicalKey(url: string): string {
 }
 
 /** All wire items, newest first. Deduplicated across feeds, capped. */
-export const getWireArticles = cache(async (limit = 40): Promise<Article[]> => {
-  const results = await Promise.all(WIRE_FEEDS.map(fetchFeed));
+export const getWireArticles = cache(async (limit = 40, maxAgeDays = MAX_AGE_DAYS): Promise<Article[]> => {
+  const results = await Promise.all(WIRE_FEEDS.map((feed) => fetchFeed(feed, maxAgeDays)));
   const seen = new Set<string>();
   const items: Article[] = [];
   for (const article of results.flat()) {
@@ -161,13 +204,32 @@ export const getWireArticles = cache(async (limit = 40): Promise<Article[]> => {
 
 /** Wire items for one section, optionally with a per-section cap. */
 export const getWireForCategory = cache(async (categorySlug: string, limit = 8): Promise<Article[]> => {
-  const items = await getWireArticles(80);
-  return items.filter((item) => item.categorySlug === categorySlug).slice(0, limit);
+  // Fetch only the feeds mapped to this section.
+  //
+  // Slicing a global "newest N" pool used to leave niche beats blank: the top
+  // of the pool is almost always general news, and a section feed that has not
+  // rebuilt for a week (The Hindu's States feed sat at 4 Nov for nine days)
+  // never made the cut. Section feeds also get a longer freshness window —
+  // items still carry their own date and publisher, so nothing is passed off
+  // as today's news.
+  const feeds = WIRE_FEEDS.filter((feed) => feed.categorySlug === categorySlug);
+  if (feeds.length === 0) return [];
+  const results = await Promise.all(feeds.map((feed) => fetchFeed(feed, SECTION_MAX_AGE_DAYS)));
+  const seen = new Set<string>();
+  const items: Article[] = [];
+  for (const article of results.flat()) {
+    const key = canonicalKey(article.sourceUrl ?? article.title);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    items.push(article);
+  }
+  items.sort((a, b) => Date.parse(b.publishedAt ?? "0") - Date.parse(a.publishedAt ?? "0"));
+  return items.slice(0, limit);
 });
 
 /** Publishers currently represented on the wire — used for the disclosure line. */
 export const getWirePublishers = cache(async (): Promise<string[]> => {
-  const items = await getWireArticles(80);
+  const items = await getWireArticles(250);
   return Array.from(new Set(items.map((item) => item.sourceName ?? "").filter(Boolean))).sort();
 });
 

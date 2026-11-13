@@ -5,7 +5,7 @@
 
 export type Language = "en" | "hi";
 
-export type Role = "admin" | "editor" | "researcher" | "user";
+export type Role = "admin" | "editor" | "researcher" | "contributor" | "user";
 
 export type ArticleStatus = "draft" | "review" | "scheduled" | "published" | "archived";
 
@@ -210,7 +210,7 @@ export interface FactCheck {
 
 export interface Submission {
   id: string;
-  type: "viral_claim" | "news_tip" | "correction_request";
+  type: "viral_claim" | "news_tip" | "correction_request" | "contributor_application";
   content: string;
   url?: string | null;
   imageUrl?: string | null;

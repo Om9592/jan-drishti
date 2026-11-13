@@ -7,7 +7,7 @@ import type { EditorialUser, Role, Viewer } from "@/lib/types";
 
 export type { Viewer };
 
-const ROLE_RANK: Record<Role, number> = { user: 1, researcher: 2, editor: 3, admin: 4 };
+const ROLE_RANK: Record<Role, number> = { user: 1, contributor: 2, researcher: 3, editor: 4, admin: 5 };
 
 export function hasAtLeast(role: Role, minimum: Role): boolean {
   return ROLE_RANK[role] >= ROLE_RANK[minimum];

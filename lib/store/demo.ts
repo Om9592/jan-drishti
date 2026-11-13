@@ -119,6 +119,7 @@ export class DemoStore implements DataStore {
       if (query.categorySlug && categorySlug(a.categoryId) !== query.categorySlug) return false;
       if (query.language && query.language !== "all" && a.language !== query.language) return false;
       if (query.state && a.state !== query.state) return false;
+      if (query.authorId && a.authorId !== query.authorId) return false;
       if (query.featuredOnly && !a.featured) return false;
       if (query.underreportedOnly && !a.underreported) return false;
       if (query.groundReportOnly && !a.groundReport) return false;

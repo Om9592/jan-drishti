@@ -8,7 +8,7 @@ import { SectionHeading } from "@/components/ui/SectionHeading";
 import { getStore } from "@/lib/store";
 import { createTranslator, normaliseLang, LANGUAGE_COOKIE } from "@/lib/i18n";
 import { SAMPLE_STATES } from "@/lib/content/sample";
-import { getWireForCategory, getWirePublishers, mergeWithWire } from "@/lib/ingestion/wire";
+import { getWireArticles, getWireForCategory, getWirePublishers, mergeWithWire } from "@/lib/ingestion/wire";
 import { WireDisclosure } from "@/components/ui/WireDisclosure";
 import { cn } from "@/lib/utils";
 import type { Article, Category } from "@/lib/types";
@@ -25,6 +25,8 @@ export interface SectionPageProps {
   searchParams: Record<string, string | string[] | undefined>;
   emptyTitle?: string;
   emptyBody?: string;
+  /** Merge the general wire when there is no single section (e.g. /latest). */
+  includeWire?: boolean;
 }
 
 function buildQuery(
@@ -52,6 +54,7 @@ export async function SectionPage({
   searchParams,
   emptyTitle,
   emptyBody,
+  includeWire,
 }: SectionPageProps) {
   const cookieStore = await cookies();
   const lang = normaliseLang(cookieStore.get(LANGUAGE_COOKIE)?.value);
@@ -66,10 +69,16 @@ export async function SectionPage({
   const isFirstPage = page === 1;
   const noFilters = !searchParams.q && !state && sort === "latest" && (language === "all" || language === "en");
 
-  const wireItems =
-    categorySlug && isFirstPage && noFilters && !showStateFilter
+  // The States page shows a state filter bar; the wire still belongs there
+  // until a specific state is chosen.
+  const wireAllowed = isFirstPage && noFilters && !(showStateFilter && state);
+  const wireItems = !wireAllowed
+    ? []
+    : categorySlug
       ? await getWireForCategory(categorySlug, PER_PAGE)
-      : [];
+      : includeWire
+        ? await getWireArticles(PER_PAGE)
+        : [];
   const wirePublishers = wireItems.length > 0 ? await getWirePublishers() : [];
 
   const result = await store.listArticles({

@@ -9,7 +9,12 @@ export const dynamic = "force-dynamic";
 
 export async function POST(request: Request) {
   return handleRoute(async () => {
-    const viewer = await requireRole("editor");
+    // Contributors may draft and submit; editors and admins may publish.
+    const viewer = await requireRole("contributor");
+    if (viewer.role === "researcher") {
+      return jsonError("Researchers file fact-check evidence; they do not write articles.", 403);
+    }
+    const isContributor = viewer.role === "contributor";
     const payload = await request.json().catch(() => null);
     const parsed = articleSchema.safeParse(payload);
     if (!parsed.success) {
@@ -22,6 +27,29 @@ export async function POST(request: Request) {
 
     const data = parsed.data;
     const store = getStore();
+
+    if (isContributor) {
+      // A contributor can only ever save their own work, and only as a draft or
+      // a submission for review. Publishing requires an editor.
+      if (data.id) {
+        const existing = await store.getArticleById(data.id);
+        if (!existing) return jsonError("Story not found.", 404);
+        if (existing.authorId !== viewer.uid) {
+          return jsonError("You can only edit your own stories.", 403);
+        }
+      }
+      data.status = data.status === "draft" ? "draft" : "review";
+      data.authorId = viewer.uid;
+      data.authorName = viewer.name ?? viewer.email ?? "Freelance contributor";
+      data.featured = false;
+      data.underreported = false;
+      data.groundReport = false;
+    }
+
+    // Editors may file on someone else's behalf; if no byline id is supplied the
+    // account doing the filing is the author.
+    if (!data.authorId) data.authorId = viewer.uid;
+
     const article = await store.saveArticle(
       {
         id: data.id,

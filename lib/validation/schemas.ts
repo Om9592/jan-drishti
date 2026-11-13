@@ -27,7 +27,7 @@ export const submissionSchema = z
     consent: z.literal(true, {
       errorMap: () => ({ message: "Please confirm you understand how submissions are reviewed." }),
     }),
-    imageUrl: z.string().trim().max(600).optional().or(z.literal("")),
+    imageUrl: z.string().trim().max(600).optional().nullable().or(z.literal("")),
   })
   .strict();
 
@@ -41,14 +41,14 @@ export const articleSchema = z.object({
   content: z.string().trim().min(80, "Article body is too short."),
   language: languageSchema,
   categoryId: z.string().min(1, "Choose a section."),
-  authorId: z.string().min(1),
+  authorId: z.string().min(1).optional(),
   authorName: z.string().trim().max(120).optional(),
   kind: z.enum(["original", "summary", "external", "opinion", "explainer"]),
   status: z.enum(["draft", "review", "scheduled", "published", "archived"]),
   imageUrl: z.string().trim().max(600).optional().or(z.literal("")),
   imageCaption: z.string().trim().max(240).optional(),
   imageCredit: z.string().trim().max(160).optional(),
-  state: z.string().trim().max(80).optional().or(z.literal("")),
+  state: z.string().trim().max(80).optional().nullable().or(z.literal("")),
   tags: z.array(z.string().trim().max(40)).max(8).optional(),
   featured: z.boolean().optional(),
   underreported: z.boolean().optional(),
@@ -120,7 +120,24 @@ export const researchRequestSchema = z.object({
 
 export const roleUpdateSchema = z.object({
   userId: z.string().min(1),
-  role: z.enum(["admin", "editor", "researcher", "user"]),
+  role: z.enum(["admin", "editor", "researcher", "contributor", "user"]),
+});
+
+export const contributorApplicationSchema = z.object({
+  name: z.string().trim().min(2, "Tell us your name.").max(120),
+  email: z.string().trim().email("Enter a valid email address.").max(200),
+  location: z.string().trim().max(120).optional().or(z.literal("")),
+  beats: z.string().trim().min(3, "Which subjects do you report on?").max(300),
+  pitch: z.string().trim().min(120, "Describe the story you want to report (at least 120 characters).").max(4000),
+  clips: z.string().trim().max(600).optional().or(z.literal("")),
+  experience: z.enum(["student", "1-3", "3-8", "8+"]).default("1-3"),
+  consent: z.literal(true, { errorMap: () => ({ message: "Please confirm this is your own work." }) }),
+});
+
+export const contributorDecisionSchema = z.object({
+  submissionId: z.string().min(1),
+  decision: z.enum(["approve", "reject"]),
+  note: z.string().trim().max(500).optional().or(z.literal("")),
 });
 
 export function fieldErrors(error: z.ZodError): Record<string, string> {

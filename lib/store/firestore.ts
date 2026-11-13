@@ -40,6 +40,26 @@ function toIso(value: unknown): string | null {
   return null;
 }
 
+/**
+ * Deep-convert Firestore values into plain JSON-safe ones.
+ *
+ * Server Components hand these objects straight to Client Components, and React
+ * refuses to serialise a Timestamp (it is a class instance). Every list method
+ * that can end up in a form or a table therefore runs its output through here.
+ */
+function plain<T>(value: T): T {
+  if (value instanceof Timestamp) return value.toDate().toISOString() as unknown as T;
+  if (Array.isArray(value)) return value.map((item) => plain(item)) as unknown as T;
+  if (value && typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
+      out[key] = plain(item);
+    }
+    return out as T;
+  }
+  return value;
+}
+
 function normaliseArticle(id: string, data: Record<string, unknown>): Article {
   return {
     ...(data as unknown as Article),
@@ -143,7 +163,7 @@ export class FirestoreStore implements DataStore {
 
   async listCategories(): Promise<Category[]> {
     const snap = await db().collection(COLLECTIONS.categories).orderBy("order", "asc").get();
-    return snap.docs.map((doc) => ({ ...(doc.data() as Category), id: doc.id }));
+    return snap.docs.map((doc) => plain({ ...(doc.data() as Category), id: doc.id }));
   }
 
   async listArticles(query: ArticleQuery): Promise<ListResult<Article>> {
@@ -157,6 +177,7 @@ export class FirestoreStore implements DataStore {
     if (query.underreportedOnly) conditions.push({ field: "underreported", op: "==", value: true });
     if (query.groundReportOnly) conditions.push({ field: "groundReport", op: "==", value: true });
     if (query.state) conditions.push({ field: "state", op: "==", value: query.state });
+    if (query.authorId) conditions.push({ field: "authorId", op: "==", value: query.authorId });
 
     let base: Query = col;
     for (const c of conditions) base = base.where(c.field, c.op, c.value);
@@ -220,7 +241,18 @@ export class FirestoreStore implements DataStore {
     const now = new Date().toISOString();
 
     const categoryDoc = await db().collection(COLLECTIONS.categories).doc(input.categoryId).get();
-    const categorySlug = categoryDoc.exists ? (categoryDoc.data() as Category).slug : undefined;
+    // A section may arrive as a document id (the editor) or as a slug (a feed,
+    // or a writer posting straight to the API). Never leave it undefined —
+    // Firestore rejects undefined values and the section would be unlinkable.
+    let categorySlug = categoryDoc.exists ? (categoryDoc.data() as Category).slug : "";
+    if (!categorySlug) {
+      const bySlug = await db()
+        .collection(COLLECTIONS.categories)
+        .where("slug", "==", input.categoryId)
+        .limit(1)
+        .get();
+      categorySlug = (bySlug.docs[0]?.data() as Category | undefined)?.slug ?? "";
+    }
 
     const payload: Record<string, unknown> = {
       slug,
@@ -372,7 +404,7 @@ export class FirestoreStore implements DataStore {
       .orderBy("date", "desc")
       .limit(200)
       .get();
-    return snap.docs.map((doc) => ({ ...(doc.data() as Correction), id: doc.id }));
+    return snap.docs.map((doc) => plain({ ...(doc.data() as Correction), id: doc.id }));
   }
 
   async addCorrection(correction: Correction, actor: { id: string; email?: string }) {
@@ -467,7 +499,7 @@ export class FirestoreStore implements DataStore {
 
   async listSources(): Promise<FeedSource[]> {
     const snap = await db().collection(COLLECTIONS.sources).get();
-    return snap.docs.map((doc) => ({ ...(doc.data() as FeedSource), id: doc.id }));
+    return snap.docs.map((doc) => plain({ ...(doc.data() as FeedSource), id: doc.id }));
   }
 
   async saveSource(source: FeedSource): Promise<FeedSource> {
@@ -478,11 +510,15 @@ export class FirestoreStore implements DataStore {
 
   async listUsers(): Promise<EditorialUser[]> {
     const snap = await db().collection(COLLECTIONS.users).limit(200).get();
-    return snap.docs.map((doc) => ({
-      ...(doc.data() as EditorialUser),
-      id: doc.id,
-      createdAt: toIso((doc.data() as { createdAt?: unknown }).createdAt) ?? new Date().toISOString(),
-    }));
+    return snap.docs.map((doc) =>
+      plain(
+        {
+          ...(doc.data() as EditorialUser),
+          id: doc.id,
+          createdAt: toIso((doc.data() as { createdAt?: unknown }).createdAt) ?? new Date().toISOString(),
+        },
+      ),
+    );
   }
 
   async setUserRole(

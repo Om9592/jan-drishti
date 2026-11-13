@@ -61,7 +61,12 @@ export function Header({ categories, latestHeadline, viewer }: HeaderProps) {
     href === "/" ? pathname === "/" : pathname === href || pathname.startsWith(`${href}/`);
 
   const accountLabel = viewer?.authenticated ? (viewer.name ?? t("nav.account")) : t("nav.login");
-  const accountHref = viewer?.authenticated ? "/profile" : "/login";
+  const isContributor = viewer?.role === "contributor";
+  const accountHref = !viewer?.authenticated
+    ? "/login"
+    : isContributor && !viewer.demo
+      ? "/contribute/desk"
+      : "/profile";
 
   return (
     <>
@@ -97,7 +102,10 @@ export function Header({ categories, latestHeadline, viewer }: HeaderProps) {
             <Link href="/corrections" className="hidden text-paper/75 hover:text-paper md:block">
               {t("footer.corrections")}
             </Link>
-            <Link href="/editorial-policy" className="hidden text-paper/75 hover:text-paper md:block">
+            <Link href="/contribute" className="hidden text-gold hover:text-gold-light md:block">
+              {t("nav.writeForUs")}
+            </Link>
+            <Link href="/editorial-policy" className="hidden text-paper/75 hover:text-paper lg:block">
               {t("footer.policy")}
             </Link>
             <LanguageSwitcher tone="dark" />
@@ -234,6 +242,14 @@ export function Header({ categories, latestHeadline, viewer }: HeaderProps) {
               {t("nav.admin")}
             </Link>
           )}
+          {isContributor && (
+            <Link
+              href="/contribute/desk"
+              className="ml-4 shrink-0 font-sans text-[0.68rem] uppercase tracking-[0.12em] text-gold-dark hover:text-navy"
+            >
+              {t("nav.contributeDesk")}
+            </Link>
+          )}
         </div>
 
         {/* Mobile bar */}
@@ -304,12 +320,20 @@ export function Header({ categories, latestHeadline, viewer }: HeaderProps) {
                 <Link href="/submit" onClick={() => setMenuOpen(false)} className="btn-primary w-full">
                   {t("nav.submit")}
                 </Link>
+                <Link href="/contribute" onClick={() => setMenuOpen(false)} className="btn-outline w-full">
+                  {t("nav.writeForUs")}
+                </Link>
                 <Link href={accountHref} onClick={() => setMenuOpen(false)} className="btn-outline w-full">
                   {accountLabel}
                 </Link>
                 {viewer && (viewer.role === "editor" || viewer.role === "admin" || viewer.role === "researcher") && (
                   <Link href="/admin" onClick={() => setMenuOpen(false)} className="btn-outline w-full">
                     {t("nav.admin")}
+                  </Link>
+                )}
+                {isContributor && (
+                  <Link href="/contribute/desk" onClick={() => setMenuOpen(false)} className="btn-outline w-full">
+                    {t("nav.contributeDesk")}
                   </Link>
                 )}
               </div>

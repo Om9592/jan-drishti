@@ -19,6 +19,7 @@ export default async function LatestPage({
       title="Latest News"
       description="Every published story, newest first. Nothing here is aggregated without attribution, and nothing is published before an editor has signed it off."
       searchParams={await searchParams}
+      includeWire
     />
   );
 }

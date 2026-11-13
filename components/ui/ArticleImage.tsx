@@ -33,7 +33,19 @@ export function ArticleImage({
     <figure className={cn("group", className)}>
       <div className={cn("relative overflow-hidden bg-paper-deep", ratioClass)}>
         {src ? (
-          src.endsWith(".svg") ? (
+          src.startsWith("http") ? (
+            /* Publisher-hosted wire thumbnail: hotlinked from its own CDN, never
+               re-hosted, credited in the caption. */
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={src}
+              alt={alt}
+              loading={priority ? "eager" : "lazy"}
+              decoding="async"
+              referrerPolicy="no-referrer"
+              className="absolute inset-0 h-full w-full object-cover transition-transform duration-700 ease-editorial group-hover:scale-[1.015]"
+            />
+          ) : src.endsWith(".svg") ? (
             /* Self-contained SVG artwork (sample edition) — served as-is. */
             // eslint-disable-next-line @next/next/no-img-element
             <img

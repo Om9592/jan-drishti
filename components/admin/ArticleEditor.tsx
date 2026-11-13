@@ -36,10 +36,14 @@ const AUTHORS = [
 export function ArticleEditor({
   article,
   categories,
+  mode = "editor",
 }: {
   article?: Article;
   categories: Category[];
+  /** "contributor" hides publishing: freelance writers draft and submit for review. */
+  mode?: "editor" | "contributor";
 }) {
+  const isContributor = mode === "contributor";
   const router = useRouter();
   const [form, setForm] = useState({
     title: article?.title ?? "",
@@ -123,7 +127,9 @@ export function ArticleEditor({
       }
       setMessage({ type: "ok", text: `Saved as ${data.article?.status}.` });
       router.refresh();
-      if (!article?.id && data.article?.id) router.push(`/admin/articles/${data.article.id}`);
+      if (!article?.id && data.article?.id) {
+        router.push(isContributor ? `/contribute/${data.article.id}` : `/admin/articles/${data.article.id}`);
+      }
     } catch {
       setMessage({ type: "error", text: "Request failed. Please try again." });
     } finally {
@@ -248,16 +254,28 @@ export function ArticleEditor({
           <div className="mt-3 space-y-3">
             <div>
               <label htmlFor="status" className="field-label">Status</label>
-              <select
-                id="status"
-                value={form.status}
-                onChange={(e) => update("status", e.target.value as Article["status"])}
-                className="field"
-              >
-                {STATUSES.map((s) => (
-                  <option key={s} value={s}>{s}</option>
-                ))}
-              </select>
+              {isContributor ? (
+                <p className="border border-rule bg-paper-shade px-3 py-2 font-sans text-[0.78rem] text-ink-soft">
+                  {form.status === "draft"
+                    ? "Draft — only you can see this"
+                    : form.status === "review"
+                      ? "In review with the desk"
+                      : form.status === "published"
+                        ? "Published (approved by an editor)"
+                        : form.status}
+                </p>
+              ) : (
+                <select
+                  id="status"
+                  value={form.status}
+                  onChange={(e) => update("status", e.target.value as Article["status"])}
+                  className="field"
+                >
+                  {STATUSES.map((s) => (
+                    <option key={s} value={s}>{s}</option>
+                  ))}
+                </select>
+              )}
             </div>
             <div>
               <label htmlFor="category" className="field-label">Section</label>
@@ -299,16 +317,22 @@ export function ArticleEditor({
             </div>
             <div>
               <label htmlFor="author" className="field-label">Byline</label>
-              <select
-                id="author"
-                value={form.authorId}
-                onChange={(e) => update("authorId", e.target.value)}
-                className="field"
-              >
-                {AUTHORS.map((a) => (
-                  <option key={a.id} value={a.id}>{a.name}</option>
-                ))}
-              </select>
+              {isContributor ? (
+                <p className="border border-rule bg-paper-shade px-3 py-2 font-sans text-[0.78rem] text-ink-soft">
+                  Your byline is applied automatically.
+                </p>
+              ) : (
+                <select
+                  id="author"
+                  value={form.authorId}
+                  onChange={(e) => update("authorId", e.target.value)}
+                  className="field"
+                >
+                  {AUTHORS.map((a) => (
+                    <option key={a.id} value={a.id}>{a.name}</option>
+                  ))}
+                </select>
+              )}
             </div>
             <div>
               <label htmlFor="state" className="field-label">State (optional)</label>
@@ -358,6 +382,8 @@ export function ArticleEditor({
               className="field text-[0.8rem]"
               aria-label="Image credit"
             />
+            {!isContributor && (
+            <>
             <label className="flex items-center gap-2 font-sans text-[0.78rem] text-ink-soft">
               <input
                 type="checkbox"
@@ -385,6 +411,8 @@ export function ArticleEditor({
               />
               Ground report
             </label>
+            </>
+            )}
           </div>
         </div>
 
@@ -402,13 +430,31 @@ export function ArticleEditor({
         )}
 
         <div className="grid gap-2">
-          <button type="button" onClick={() => save("published")} disabled={busy} className="btn-primary">
-            {busy && <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />}
-            Publish
-          </button>
-          <button type="button" onClick={() => save("draft")} disabled={busy} className="btn-outline">
-            Save draft
-          </button>
+          {isContributor ? (
+            <>
+              <button type="button" onClick={() => save("review")} disabled={busy} className="btn-primary">
+                {busy && <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />}
+                Submit for editorial review
+              </button>
+              <button type="button" onClick={() => save("draft")} disabled={busy} className="btn-outline">
+                Save draft
+              </button>
+              <p className="font-sans text-[0.7rem] leading-relaxed text-ink-muted">
+                An editor reads every submission. Nothing you file goes live until it has been
+                checked and approved — that is the whole point of the desk.
+              </p>
+            </>
+          ) : (
+            <>
+              <button type="button" onClick={() => save("published")} disabled={busy} className="btn-primary">
+                {busy && <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />}
+                Publish
+              </button>
+              <button type="button" onClick={() => save("draft")} disabled={busy} className="btn-outline">
+                Save draft
+              </button>
+            </>
+          )}
           {article && (
             <a
               href={`/article/${article.slug}`}

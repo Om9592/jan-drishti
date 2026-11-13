@@ -15,6 +15,7 @@ export function AdminNav({ role }: { role: Role }) {
     { href: "/admin/submissions", label: t("admin.submissions") },
     { href: "/admin/fact-checks", label: t("admin.factChecks") },
     { href: "/admin/articles", label: t("admin.articles") },
+    { href: "/admin/contributors", label: t("admin.contributors") },
     { href: "/admin/corrections", label: t("admin.corrections") },
     { href: "/admin/taxonomy", label: t("admin.taxonomy") },
     ...(role === "admin" ? [{ href: "/admin/users", label: t("admin.users") }] : []),
