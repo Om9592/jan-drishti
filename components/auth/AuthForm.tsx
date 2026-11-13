@@ -76,6 +76,12 @@ export function AuthForm() {
         return "Too many attempts. Please wait a few minutes and try again.";
       case "auth/popup-closed-by-user":
         return "Google sign-in was closed before it finished.";
+      case "auth/operation-not-allowed":
+        return "This sign-in method is not enabled for the project yet. Use email and password, or ask the editor to enable Google sign-in in Firebase.";
+      case "auth/unauthorized-domain":
+        return "This domain is not authorised for sign-in. Add it under Firebase → Authentication → Settings → Authorized domains.";
+      case "auth/admin-restricted-operation":
+        return "Sign-ups are restricted for this project. Ask the editor to create your account.";
       default:
         return "Sign-in failed. Please try again.";
     }
