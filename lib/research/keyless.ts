@@ -137,7 +137,9 @@ export async function wireSearch(query: string, limit = 6): Promise<SearchHit[]>
       const hits = tokens.filter((token) => haystack.includes(token)).length;
       return { article, hits };
     })
-    .filter((row) => row.hits >= Math.max(2, Math.ceil(tokens.length / 3)))
+    // Two matching terms is enough to surface a related headline: the point of
+    // this retriever is recall, the editor judges relevance.
+    .filter((row) => row.hits >= Math.min(2, tokens.length))
     .sort((a, b) => b.hits - a.hits || Date.parse(b.article.publishedAt ?? "0") - Date.parse(a.article.publishedAt ?? "0"))
     .slice(0, limit);
 

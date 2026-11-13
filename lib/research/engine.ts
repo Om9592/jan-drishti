@@ -44,22 +44,90 @@ const STEPS: Omit<ResearchStep, "status">[] = [
 
 const ENTITY_RE = /\b([A-Z][a-z]{2,}(?:\s+[A-Z][a-z]{2,}){0,3})\b/g;
 
+const NUMBER_WORDS = new Set(
+  (
+    "one two three four five six seven eight nine ten eleven twelve twenty thirty forty fifty hundred thousand " +
+    "lakh lakhs crore crores million billion percent per cent"
+  )
+    .split(" ")
+    .filter(Boolean),
+);
+
+const STOPWORDS = new Set(
+  ("a an and are as at be been being by for from had has have he her his i in into is it its of on or our " +
+    "said says she that the their them there these they this those to was were what when where which who why " +
+    "will with would you your more than over under after before during also just only very much many some " +
+    "news claim viral video viral post reportedly report reports according source sources")
+    .split(" ")
+    .filter(Boolean),
+);
+
+/**
+ * Search engines (and RSS indexes) match keywords, not sentences. Passing the
+ * full claim as a query — which is what the deterministic path used to do —
+ * returned almost nothing on the live deployment. This builds a keyword query
+ * from the longest content words plus any named entities.
+ */
+function keywordsOf(text: string): string {
+  const words = text
+    .replace(/[^\p{L}\p{N}\s]/gu, " ")
+    .split(/\s+/)
+    .map((w) => w.trim())
+    .filter((w) => w.length > 2 && !STOPWORDS.has(w.toLowerCase()));
+  const entities = Array.from(new Set((text.match(ENTITY_RE) ?? []).filter((e) => e.length > 3)));
+  const ranked = Array.from(new Set(words)).sort((a, b) => b.length - a.length).slice(0, 8);
+  const merged = Array.from(new Set([...entities.slice(0, 4), ...ranked])).slice(0, 10);
+  return merged.join(" ");
+}
+
+/**
+ * News indexes (Google News, Bing News) treat a multi-word query as AND, so a
+ * five-word query returns almost nothing. Short queries of two or three terms
+ * retrieve far more, so the deterministic path generates a spread of them:
+ * proper-noun pairs first, then entity + distinctive noun, then a fact-check
+ * specific query, then the full keyword string for indexes that tolerates it.
+ */
 function fallbackQueries(claimText: string): { claims: ResearchReport["extractedClaims"]; queries: string[]; entities: string[] } {
   const sentences = claimText
     .replace(/\s+/g, " ")
     .split(/(?<=[.!?।])\s+/)
     .filter((s) => s.trim().length > 12)
     .slice(0, 4);
-  const entities = Array.from(new Set(claimText.match(ENTITY_RE) ?? [])).slice(0, 10);
+  // Sentence-initial capitals and number words are not entities: "More Yamuna"
+  // is a worse query than "Yamuna fish".
+  const entities = Array.from(
+    new Set((claimText.match(ENTITY_RE) ?? []).map((word) => word.replace(/^(The|A|An)\s+/, ""))),
+  )
+    .filter((word) => word.length > 3)
+    .filter((word) => {
+      const lower = word.toLowerCase();
+      return !STOPWORDS.has(lower) && !NUMBER_WORDS.has(lower) && !NUMBER_WORDS.has(lower.split(" ")[0]);
+    })
+    .slice(0, 10);
   const claims = sentences.map((text) => ({ text: text.trim(), type: "factual" as const, entities }));
-  const core = claimText.replace(/\s+/g, " ").slice(0, 180);
+
+  const contentWords = claimText
+    .replace(/[^\p{L}\p{N}\s]/gu, " ")
+    .split(/\s+/)
+    .map((w) => w.trim())
+    .filter((w) => w.length > 3 && !STOPWORDS.has(w.toLowerCase()) && !NUMBER_WORDS.has(w.toLowerCase()));
+  const distinctive = contentWords.filter((w) => !entities.some((e) => e.includes(w))).slice(0, 6);
+  const keywords = keywordsOf(claimText) || contentWords.slice(0, 5).join(" ");
+
+  const queries: string[] = [];
+  if (entities.length >= 2) queries.push(`${entities[0]} ${entities[1]}`);
+  if (entities.length >= 1 && distinctive.length >= 1) queries.push(`${entities[0]} ${distinctive[0]}`);
+  // A quoted phrase from the claim finds the exact story rather than any page
+  // that shares two common words.
+  if (distinctive.length >= 2) queries.push(`"${distinctive[0]} ${distinctive[1]}"`);
+  if (distinctive.length >= 2) queries.push(`${distinctive[0]} ${distinctive[1]}`);
+  if (entities.length >= 1) queries.push(`${entities[0]} fact check`);
+  if (queries.length === 0) queries.push(keywords);
+  queries.push(keywords);
+
   return {
     claims: claims.length > 0 ? claims : [{ text: claimText.slice(0, 300), type: "factual", entities }],
-    queries: [
-      `${core} official notification`,
-      `${core} fact check`,
-      `${core} PIB press release`,
-    ],
+    queries: Array.from(new Set(queries)).slice(0, 5),
     entities,
   };
 }
@@ -245,6 +313,17 @@ export async function runResearch(input: ResearchInput): Promise<ResearchResult>
       "The research pipeline ran but no retriever returned a usable result, so no external evidence was collected. This report is not a finding: it records that the evidence step could not be performed.";
     report.preliminaryVerdict = "unverified";
     return { report, evidence: [] };
+  }
+
+  // If the first pass is too thin to corroborate, retry once with a short
+  // keyword query — long sentences retrieve poorly from news indexes.
+  if (independentPublishers(hits).length < 3) {
+    const keywordQuery = keywordsOf(input.claimText);
+    if (keywordQuery) {
+      const retry = await retrieveEvidence([keywordQuery], 10);
+      for (const name of retry.used) sourcesUsed.add(`${name}-retry`);
+      for (const hit of retry.hits) pushHit(hit);
+    }
   }
 
   const publishers = independentPublishers(hits);
