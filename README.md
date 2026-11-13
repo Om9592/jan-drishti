@@ -171,7 +171,8 @@ Try it: `/admin/fact-checks` → *Run research* → review → *Approve & publis
   by canonical-URL fingerprint, detects language (Devanagari ratio), assigns a section,
   and stores **headline + short attributed summary + canonical link only** — never full text.
 * Ingested items are written with `status: "review"` and `kind: "external"`.
-* Scheduled run: Vercel Cron hits `/api/cron/ingest` every 3 hours with
+* Scheduled run: Vercel Cron hits `/api/cron/ingest` daily at 03:00 IST (21:30 UTC) — Hobby
+  accounts reject more frequent cron; switch `vercel.json` to `0 */3 * * *` on Pro — with
   `Authorization: Bearer $CRON_SECRET` (see `vercel.json`).
 * Manual run: `node scripts/ingest.mjs` or the *Fetch now* button per source.
 

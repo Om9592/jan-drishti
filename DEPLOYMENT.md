@@ -73,7 +73,10 @@ vercel domains ls                # confirm the *.vercel.app hostname
    `NEXT_PUBLIC_`.
 4. **Cron secret.** Generate one (`openssl rand -hex 32`) and set `CRON_SECRET`. The same
    value authorises `/api/cron/ingest`, which `vercel.json` schedules every three hours.
-   Vercel Cron invokes it with the secret automatically on plans where cron is enabled.
+   Vercel Cron invokes it with the secret automatically where cron is enabled.
+   **Schedule note:** `vercel.json` runs ingestion once daily at 21:30 UTC (03:00 IST) because Hobby accounts reject anything more frequent than daily. On Pro, change the expression to
+   `0 */3 * * *` for three-hourly runs — a deployment with the daily expression on Hobby was
+   the first thing Vercel's API refused, so it is now the committed default.
 5. **Deploy Firebase rules and indexes** (`firebase deploy --only
    firestore:rules,firestore:indexes,storage`) against the same project, then seed the
    taxonomy: `node scripts/seed.mjs --email you@example.org`.
