@@ -87,6 +87,57 @@ function withinRange(iso: string | null, range?: string): boolean {
   return Date.now() - new Date(iso).getTime() <= days * 86_400_000;
 }
 
+/**
+ * Firestore can only answer an equality-filter + orderBy query when a composite
+ * index exists. Indexes are deployed with `firebase deploy --only firestore:indexes`;
+ * until that has run (a fresh project, or a new query shape), the query fails with
+ * FAILED_PRECONDITION (code 9).
+ *
+ * Rather than 500-ing the whole site, we fall back to fetching the filtered set and
+ * sorting it in memory. It is capped, logged, and only used while an index is
+ * missing — the moment the index exists the fast path is taken again.
+ */
+const FAILED_PRECONDITION = 9;
+const FALLBACK_SCAN_LIMIT = 500;
+
+function isMissingIndex(error: unknown): boolean {
+  return (error as { code?: number } | null)?.code === FAILED_PRECONDITION;
+}
+
+function timeValue(value: unknown): number {
+  const iso = toIso(value);
+  return iso ? new Date(iso).getTime() : 0;
+}
+
+async function sortedDocs(
+  sorted: Query,
+  unsorted: Query,
+  sortField: string,
+  direction: "asc" | "desc",
+  offset: number,
+  pageSize: number,
+): Promise<{ docs: FirebaseFirestore.QueryDocumentSnapshot[]; total: number; degraded: boolean }> {
+  try {
+    const countSnap = await sorted.count().get();
+    let paged: Query = sorted;
+    if (offset > 0) paged = paged.offset(offset);
+    paged = paged.limit(pageSize);
+    return { docs: (await paged.get()).docs, total: countSnap.data().count, degraded: false };
+  } catch (error) {
+    if (!isMissingIndex(error)) throw error;
+    console.warn(
+      `[firestore] missing composite index for ${sortField} — sorting in memory. Run: firebase deploy --only firestore:indexes`,
+    );
+    const all = (await unsorted.limit(FALLBACK_SCAN_LIMIT).get()).docs;
+    all.sort((a, b) =>
+      direction === "asc"
+        ? timeValue(a.get(sortField)) - timeValue(b.get(sortField))
+        : timeValue(b.get(sortField)) - timeValue(a.get(sortField)),
+    );
+    return { docs: all.slice(offset, offset + pageSize), total: all.length, degraded: true };
+  }
+}
+
 export class FirestoreStore implements DataStore {
   readonly backend = "firestore" as const;
 
@@ -107,30 +158,24 @@ export class FirestoreStore implements DataStore {
     if (query.groundReportOnly) conditions.push({ field: "groundReport", op: "==", value: true });
     if (query.state) conditions.push({ field: "state", op: "==", value: query.state });
 
-    let q: Query = col;
-    for (const c of conditions) q = q.where(c.field, c.op, c.value);
+    let base: Query = col;
+    for (const c of conditions) base = base.where(c.field, c.op, c.value);
     if (query.q) {
       const tokensWanted = searchTokens(query.q).slice(0, 10);
       if (tokensWanted.length > 0) {
-        q = q.where("keywords", "array-contains-any", tokensWanted);
+        base = base.where("keywords", "array-contains-any", tokensWanted);
       }
     }
-    q = q.orderBy("publishedAt", query.sort === "oldest" ? "asc" : "desc");
+    const direction = query.sort === "oldest" ? "asc" : "desc";
+    const sorted = base.orderBy("publishedAt", direction);
 
     const pageSize = query.limit ?? query.perPage ?? 20;
     const page = query.page ?? 1;
     const offset = query.limit ? 0 : (page - 1) * pageSize;
 
     // Count first so pagination UI can show a total.
-    const countSnap = await q.count().get();
-    const total = countSnap.data().count;
-
-    let paged: Query = q;
-    if (offset > 0) paged = paged.offset(offset);
-    paged = paged.limit(pageSize);
-
-    const snap = await paged.get();
-    let items = snap.docs.map((doc) => normaliseArticle(doc.id, doc.data()));
+    const { docs, total } = await sortedDocs(sorted, base, "publishedAt", direction, offset, pageSize);
+    let items = docs.map((doc) => normaliseArticle(doc.id, doc.data()));
 
     if (query.kind) items = items.filter((a) => a.kind === query.kind);
     if (query.excludeId) items = items.filter((a) => a.id !== query.excludeId);
@@ -156,14 +201,12 @@ export class FirestoreStore implements DataStore {
   }
 
   async getRelatedArticles(article: Article, limit = 4): Promise<Article[]> {
-    const snap = await db()
+    const base = db()
       .collection(COLLECTIONS.articles)
       .where("status", "==", "published")
-      .where("categorySlug", "==", article.categorySlug ?? "")
-      .orderBy("publishedAt", "desc")
-      .limit(limit + 1)
-      .get();
-    return snap.docs
+      .where("categorySlug", "==", article.categorySlug ?? "");
+    const { docs } = await sortedDocs(base.orderBy("publishedAt", "desc"), base, "publishedAt", "desc", 0, limit + 1);
+    return docs
       .map((doc) => normaliseArticle(doc.id, doc.data()))
       .filter((a) => a.id !== article.id)
       .slice(0, limit);
@@ -255,19 +298,16 @@ export class FirestoreStore implements DataStore {
 
   async listFactChecks(query: FactCheckQuery): Promise<ListResult<FactCheck>> {
     const status = query.status ?? "published";
-    let qf: Query = db().collection(COLLECTIONS.factChecks);
-    if (status !== "all") qf = qf.where("status", "==", status);
-    if (query.verdict && query.verdict !== "all") qf = qf.where("verdict", "==", query.verdict);
-    qf = qf.orderBy("publishedAt", query.sort === "oldest" ? "asc" : "desc");
-    const countSnap = await qf.count().get();
-    const total = countSnap.data().count;
+    let base: Query = db().collection(COLLECTIONS.factChecks);
+    if (status !== "all") base = base.where("status", "==", status);
+    if (query.verdict && query.verdict !== "all") base = base.where("verdict", "==", query.verdict);
+    const direction = query.sort === "oldest" ? "asc" : "desc";
+    const sorted = base.orderBy("publishedAt", direction);
     const pageSize = query.limit ?? query.perPage ?? 12;
     const page = query.page ?? 1;
-    let paged: Query = qf;
-    if (!query.limit && page > 1) paged = paged.offset((page - 1) * pageSize);
-    paged = paged.limit(pageSize);
-    const snap = await paged.get();
-    let items = snap.docs.map((doc) => normaliseFactCheck(doc.id, doc.data()));
+    const offset = !query.limit && page > 1 ? (page - 1) * pageSize : 0;
+    const { docs, total } = await sortedDocs(sorted, base, "publishedAt", direction, offset, pageSize);
+    let items = docs.map((doc) => normaliseFactCheck(doc.id, doc.data()));
     if (query.q) {
       const needle = query.q.toLowerCase();
       items = items.filter((f) =>
@@ -399,11 +439,11 @@ export class FirestoreStore implements DataStore {
   }
 
   async listSubmissions(status?: Submission["status"] | "all"): Promise<Submission[]> {
-    let q: Query = db().collection(COLLECTIONS.submissions);
-    if (status && status !== "all") q = q.where("status", "==", status);
-    q = q.orderBy("createdAt", "desc").limit(100);
-    const snap = await q.get();
-    return snap.docs.map((doc) => normaliseSubmission(doc.id, doc.data()));
+    let base: Query = db().collection(COLLECTIONS.submissions);
+    if (status && status !== "all") base = base.where("status", "==", status);
+    const sorted = base.orderBy("createdAt", "desc");
+    const { docs } = await sortedDocs(sorted, base, "createdAt", "desc", 0, 100);
+    return docs.map((doc) => normaliseSubmission(doc.id, doc.data()));
   }
 
   async updateSubmission(

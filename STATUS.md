@@ -21,6 +21,9 @@ asserted that was not executed. Where something could not be done, it says so pl
 | Integration tests on live site | `BASE_URL=https://jan-drishti-navy.vercel.app npm test` | ✅ 12/12 pass |
 | Browser check on live site | Playwright, home + report, console + failed requests | ✅ clean |
 | Canonical / OG / sitemap | fetched from production | ✅ all use `https://jan-drishti-navy.vercel.app` |
+| Firebase Firestore | Admin API probe | ✅ database created, rules deployed, 11 sections + 2 sources seeded |
+| Firebase Auth | Identity Toolkit Admin API | ✅ email/password on, anonymous/phone off, Vercel domain authorised |
+| End-to-end Firestore write | POST `/api/submissions` → read back with Admin SDK | ✅ real document + audit log, then cleaned up |
 
 ## 2. Implemented (working code, no external accounts needed to run)
 
@@ -54,8 +57,8 @@ asserted that was not executed. Where something could not be done, it says so pl
 
 | Item | Variable(s) | Behaviour until configured |
 | --- | --- | --- |
-| Firestore read/write | `FIREBASE_PROJECT_ID`, `FIREBASE_CLIENT_EMAIL`, `FIREBASE_PRIVATE_KEY` | In-memory sample store, banner shown |
-| Firebase Auth (email + Google) | `NEXT_PUBLIC_FIREBASE_*`, authorised domains | Sign-in returns a clear 503, not a fake session |
+| Firestore read/write | `FIREBASE_PROJECT_ID`, `FIREBASE_CLIENT_EMAIL`, `FIREBASE_PRIVATE_KEY` | ✅ configured — live database |
+| Firebase Auth (email + Google) | `NEXT_PUBLIC_FIREBASE_*`, authorised domains | ✅ email/password live; Google needs a console toggle |
 | Screenshot uploads | `NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET` + storage rules | Upload field disabled |
 | AI drafting | `AI_API_KEY`, `AI_BASE_URL`, `AI_MODEL` | Report marked "manual review required" |
 | Evidence search | `TAVILY_API_KEY` / `BRAVE_API_KEY` / `SERPER_API_KEY` | No evidence retrieved ⇒ UNVERIFIED |

@@ -18,8 +18,8 @@ human editor.
 | 22 required routes + admin sub-routes | ✅ implemented |
 | Editorial design system (Bharat-flavoured broadsheet) | ✅ implemented |
 | Bilingual EN/HI UI, navigation, forms and copy | ✅ implemented |
-| Firestore data layer (articles, fact checks, submissions, corrections, audit, bookmarks, newsletter) | ✅ implemented (needs credentials) |
-| Firebase Auth sessions + role-based access (admin / editor / researcher / user) | ✅ implemented (needs credentials) |
+| Firestore data layer (articles, fact checks, submissions, corrections, audit, bookmarks, newsletter) | ✅ live on project `jan-dristi` — see `FIREBASE-SETUP.md` |
+| Firebase Auth sessions + role-based access (admin / editor / researcher / user) | ✅ Email/password enabled, domains authorised |
 | Fact-check pipeline: extract → search → classify → compare → draft → human approval | ✅ implemented (search/AI need keys) |
 | RSS ingestion with robots.txt compliance, dedupe, attribution, review queue | ✅ implemented (writes need Firestore) |
 | Security rules for Firestore + Storage, indexes, server-side validation, rate limiting, audit logging | ✅ in repo |
@@ -249,9 +249,9 @@ Two honest notes:
    anonymous visitor gets the Vercel login page there. `jan-drishti-navy.vercel.app` is the
    unprotected production alias and serves the site normally. Turn protection off project-wide
    under Settings → Deployment Protection if you want the generated URLs public too.
-2. The site currently runs in **preview mode on Vercel** (`/api/health` → `"backend":
-   "sample"`) because no Firebase credentials are set in the Vercel project yet. Add them and
-   redeploy to switch to Firestore.
+2. Firebase is provisioned: `/api/health` reports `"backend": "firestore"`, `"demo": false`.
+   Remaining Firebase work (composite indexes, Storage billing, Google sign-in, first admin
+   account) is tracked in `FIREBASE-SETUP.md`.
 
 ## 11. Testing
 
