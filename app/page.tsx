@@ -125,6 +125,30 @@ export default async function HomePage() {
                   <p className="mt-2 font-sans text-[0.8rem] leading-relaxed text-paper/60">
                     {t("empty.factChecksBody")}
                   </p>
+                  <ol className="mt-7 space-y-3 border-t border-paper/20 pt-5">
+                    {(lang === "hi"
+                      ? [
+                          "दावा और उसका स्रोत दर्ज करें",
+                          "सरकारी रिकॉर्ड, अदालती आदेश और मूल दस्तावेज़ खोजें",
+                          "दोनों पक्षों का प्रमाण लगाएँ, फिर संपादक निर्णय दें",
+                        ]
+                      : [
+                          "Record the claim and where it came from",
+                          "Pull government records, court orders and primary documents",
+                          "Weigh evidence for both sides, then a named editor decides",
+                        ]
+                    ).map((step, index) => (
+                      <li key={step} className="flex gap-3 font-sans text-[0.82rem] leading-snug text-paper/70">
+                        <span
+                          aria-hidden="true"
+                          className="mt-0.5 font-sans text-[0.6rem] tracking-[0.1em] text-gold"
+                        >
+                          {String(index + 1).padStart(2, "0")}
+                        </span>
+                        <span>{step}</span>
+                      </li>
+                    ))}
+                  </ol>
                 </div>
               )}
 
