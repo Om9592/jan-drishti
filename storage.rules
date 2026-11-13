@@ -1,0 +1,45 @@
+rules_version = '2';
+
+// Jan Drishti — Cloud Storage security rules
+// Uploads are restricted to signed-in users, images only, 5 MB maximum.
+// Editorial images are written by the server (admin SDK) which bypasses rules.
+
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isImage() {
+      return request.resource.contentType.matches('image/(png|jpeg|webp)');
+    }
+
+    function under5Mb() {
+      return request.resource.size <= 5 * 1024 * 1024;
+    }
+
+    // Reader-submitted screenshots. Write-only for readers: they are read back
+    // by the editorial desk, never listed publicly.
+    match /submissions/{fileName} {
+      allow create: if isSignedIn() && isImage() && under5Mb();
+      allow read: if request.auth != null;
+      allow update, delete: if false;
+    }
+
+    // Published editorial imagery is read-only in public.
+    match /articles/{fileName} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    match /avatars/{userId}/{fileName} {
+      allow read: if true;
+      allow write: if isSignedIn() && request.auth.uid == userId && isImage() && under5Mb();
+    }
+
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

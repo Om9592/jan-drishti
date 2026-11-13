@@ -1,0 +1,123 @@
+rules_version = '2';
+
+// Jan Drishti — Cloud Firestore security rules
+//
+// Principles
+//  * Public readers can read published articles and fact-check reports only.
+//  * Drafts, submissions, review files, evidence and audit logs are never public.
+//  * Roles are stored in /users/{uid}.role and are written only by an admin.
+//  * Nothing is trusted from the client: the admin SDK bypasses these rules, and
+//    every mutation in the app goes through role-checked server routes.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function role() {
+      return isSignedIn() ? get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role : 'anonymous';
+    }
+
+    function isResearcher() {
+      return isSignedIn() && role() in ['researcher', 'editor', 'admin'];
+    }
+
+    function isEditor() {
+      return isSignedIn() && role() in ['editor', 'admin'];
+    }
+
+    function isAdmin() {
+      return isSignedIn() && role() == 'admin';
+    }
+
+    function isPublished(resource) {
+      return resource.data.status == 'published';
+    }
+
+    // ---------------------------------------------------------------- articles
+    match /articles/{articleId} {
+      allow read: if isPublished(resource) || isResearcher();
+      allow create, update, delete: if false; // server (admin SDK) only
+    }
+
+    // ------------------------------------------------------------- fact checks
+    match /factChecks/{factCheckId} {
+      allow read: if isPublished(resource) || isResearcher();
+      allow create, update, delete: if false;
+    }
+
+    match /claims/{claimId} {
+      allow read: if isResearcher();
+      allow write: if false;
+    }
+
+    match /evidence/{evidenceId} {
+      allow read: if isResearcher();
+      allow write: if false;
+    }
+
+    // ------------------------------------------------------------- submissions
+    match /submissions/{submissionId} {
+      // Public writes go through /api/submissions (rate limited + validated).
+      allow read: if isResearcher();
+      allow create, update, delete: if false;
+    }
+
+    // -------------------------------------------------------------- corrections
+    match /corrections/{correctionId} {
+      allow read: if true; // public corrections log — transparency by default
+      allow write: if false;
+    }
+
+    // ------------------------------------------------------------------- users
+    match /users/{userId} {
+      allow read: if isSignedIn() && (request.auth.uid == userId || isAdmin());
+      // A user may not grant themselves a role.
+      allow update: if false;
+      allow create, delete: if false;
+      // Staff directory for the admin console (list only, no private fields).
+      allow list: if isAdmin();
+    }
+
+    // ----------------------------------------------------------------- sources
+    match /sources/{sourceId} {
+      allow read: if isEditor();
+      allow write: if false;
+    }
+
+    match /categories/{categoryId} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    // --------------------------------------------------------------- bookmarks
+    match /bookmarks/{bookmarkId} {
+      allow read: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow create: if isSignedIn() && request.resource.data.userId == request.auth.uid;
+      allow delete: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow update: if false;
+    }
+
+    // ---------------------------------------------------------------- audit log
+    match /auditLogs/{logId} {
+      allow read: if isEditor();
+      allow write: if false; // append-only via server
+    }
+
+    match /translations/{translationId} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    match /newsletter/{docId} {
+      allow read, write: if false; // server only
+    }
+
+    // Default deny.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
