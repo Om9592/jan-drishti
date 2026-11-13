@@ -257,6 +257,27 @@ export interface EditorialUser {
   lastSeenAt?: string;
   status: "active" | "invited" | "suspended";
   bookmarks?: string[];
+  /** Public profile of a freelance contributor (/contributors/<slug>). */
+  slug?: string;
+  beats?: string;
+  bio?: string;
+  location?: string;
+  avatarUrl?: string;
+  /** Set when an editor approved the contributor application. */
+  approvedAt?: string;
+}
+
+export interface ContributorProfile {
+  id: string;
+  slug: string;
+  name: string;
+  beats: string;
+  bio: string;
+  location: string;
+  avatarUrl?: string | null;
+  publishedCount: number;
+  joinedAt: string;
+  latest: Article[];
 }
 
 export interface Bookmark {

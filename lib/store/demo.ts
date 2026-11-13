@@ -409,6 +409,20 @@ export class DemoStore implements DataStore {
     return [...state().users];
   }
 
+  async getContributorBySlug(slug: string): Promise<EditorialUser | null> {
+    return state().users.find((u) => u.slug === slug && u.role === "contributor") ?? null;
+  }
+
+  async updateContributorProfile(
+    id: string,
+    patch: Partial<Pick<EditorialUser, "name" | "slug" | "beats" | "bio" | "location" | "avatarUrl">>,
+  ): Promise<EditorialUser | null> {
+    const user = state().users.find((u) => u.id === id);
+    if (!user) return null;
+    Object.assign(user, patch);
+    return user;
+  }
+
   async setUserRole(
     id: string,
     role: EditorialUser["role"],

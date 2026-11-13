@@ -4,6 +4,8 @@ import { redirect } from "next/navigation";
 import { cookies } from "next/headers";
 import { ArrowRight, FileText, Plus, ShieldAlert, ShieldCheck } from "lucide-react";
 import { getStore } from "@/lib/store";
+import { ContributorProfileForm } from "@/components/contributor/ProfileForm";
+import { contributorSlugForUser } from "@/lib/services/contributors";
 import { getViewer } from "@/lib/security/auth";
 import { formatDateTime } from "@/lib/utils";
 
@@ -70,6 +72,9 @@ export default async function ContributorDeskPage() {
 
   const store = getStore();
   const mine = await store.listArticles({ status: "all", authorId: viewer.uid, limit: 100, sort: "latest" });
+  const users = await store.listUsers();
+  const me = users.find((user) => user.id === viewer.uid);
+  const publicSlug = me ? contributorSlugForUser(me) : null;
   const cookieStore = await cookies();
   const isStaff = viewer.role === "editor" || viewer.role === "admin";
 
@@ -126,6 +131,30 @@ export default async function ContributorDeskPage() {
               then does it carry your byline.
             </p>
           </div>
+        </div>
+      </div>
+
+      <div className="mt-4 grid gap-4 lg:grid-cols-2">
+        {me && <ContributorProfileForm profile={{ ...me, slug: publicSlug ?? me.slug }} />}
+        <div className="border border-rule bg-white px-4 py-3">
+          <p className="font-serif text-[1.02rem] text-navy">Where readers find your work</p>
+          <p className="mt-1 font-sans text-[0.76rem] leading-relaxed text-ink-soft">
+            Approved stories appear in their section, on the front page when the desk decides, and on your own
+            contributor page listing everything you have published.
+          </p>
+          {counts.published > 0 && publicSlug ? (
+            <Link
+              href={`/contributors/${publicSlug}`}
+              className="mt-2 inline-flex items-center gap-1.5 border border-navy px-3 py-1.5 font-sans text-[0.6rem] uppercase tracking-[0.1em] text-navy hover:bg-navy hover:text-paper"
+            >
+              View my public page
+              <ArrowRight className="h-3 w-3" aria-hidden="true" />
+            </Link>
+          ) : (
+            <p className="mt-2 font-sans text-[0.7rem] text-ink-muted">
+              Your public page goes live with your first approved story.
+            </p>
+          )}
         </div>
       </div>
 

@@ -521,6 +521,33 @@ export class FirestoreStore implements DataStore {
     );
   }
 
+  async getContributorBySlug(slug: string): Promise<EditorialUser | null> {
+    const snap = await db()
+      .collection(COLLECTIONS.users)
+      .where("slug", "==", slug)
+      .where("role", "==", "contributor")
+      .limit(1)
+      .get();
+    const doc = snap.docs[0];
+    if (!doc) return null;
+    return plain({ ...(doc.data() as EditorialUser), id: doc.id });
+  }
+
+  async updateContributorProfile(
+    id: string,
+    patch: Partial<Pick<EditorialUser, "name" | "slug" | "beats" | "bio" | "location" | "avatarUrl">>,
+  ): Promise<EditorialUser | null> {
+    const clean: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(patch)) {
+      if (value !== undefined) clean[key] = value;
+    }
+    if (Object.keys(clean).length === 0) return null;
+    await db().collection(COLLECTIONS.users).doc(id).set(clean, { merge: true });
+    const doc = await db().collection(COLLECTIONS.users).doc(id).get();
+    if (!doc.exists) return null;
+    return plain({ ...(doc.data() as EditorialUser), id: doc.id });
+  }
+
   async setUserRole(
     id: string,
     role: EditorialUser["role"],

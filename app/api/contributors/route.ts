@@ -3,6 +3,7 @@ import { requireRole } from "@/lib/security/auth";
 import { clientIp, rateLimit } from "@/lib/security/rate-limit";
 import { getStore } from "@/lib/store";
 import { contributorApplicationSchema, contributorDecisionSchema } from "@/lib/validation/schemas";
+import { slugify } from "@/lib/utils";
 import { COLLECTIONS, adminAuth, adminDb } from "@/lib/firebase/admin";
 import { config, isFirebaseAdminConfigured } from "@/lib/config";
 
@@ -106,7 +107,13 @@ export async function PATCH(request: Request) {
 
     await auth.setCustomUserClaims(uid, { role: "contributor" });
     await store.setUserRole(uid, "contributor", actor);
-    // Keep the profile fields the roster and the desk read from.
+    // Keep the profile fields the roster and the desk read from. The public
+    // profile (/contributors/<slug>) is seeded from the pitch itself, so the
+    // writer has a real page the moment their first story is approved.
+    const beatsLine = application.content.match(/^Beats:\s*(.+)$/m)?.[1]?.trim() ?? "";
+    const locationLine = application.content.match(/^Location:\s*(.+)$/m)?.[1]?.trim() ?? "";
+    const name = application.submitterName?.trim() || email.split("@")[0];
+    const slug = `${slugify(name) || "contributor"}-${uid.slice(-4).toLowerCase()}`;
     const db = adminDb();
     if (db) {
       await db
@@ -115,8 +122,12 @@ export async function PATCH(request: Request) {
         .set(
           {
             email: email,
-            name: application.submitterName ?? "",
+            name,
             status: "active",
+            slug,
+            beats: beatsLine,
+            location: locationLine,
+            approvedAt: new Date().toISOString(),
           },
           { merge: true },
         );

@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import { cookies } from "next/headers";
 import { ChevronRight, Clock3, RefreshCw, ShieldCheck } from "lucide-react";
 import { getStore } from "@/lib/store";
+import { contributorSlugFor } from "@/lib/services/contributors";
 import { createTranslator, normaliseLang, LANGUAGE_COOKIE } from "@/lib/i18n";
 import { config } from "@/lib/config";
 import { ArticleImage } from "@/components/ui/ArticleImage";
@@ -72,6 +73,8 @@ export default async function ArticlePage({ params }: { params: Promise<{ slug: 
   const related = await store.getRelatedArticles(article, 4);
   const categories = await store.listCategories();
   const category = categories.find((c) => c.id === article.categoryId);
+  // A freelance contributor's byline links to their own page of published work.
+  const contributorSlug = article.authorId ? await contributorSlugFor(article.authorId) : null;
   const url = `${config.siteUrl}/article/${article.slug}`;
   const corrections = article.corrections ?? [];
 
@@ -160,7 +163,21 @@ export default async function ArticlePage({ params }: { params: Promise<{ slug: 
               </div>
               <div>
                 <p className="font-sans text-[0.8rem] font-medium text-ink">
-                  {article.authorName ?? "Jan Drishti Editorial Desk"}
+                  {contributorSlug ? (
+                    <Link
+                      href={`/contributors/${contributorSlug}`}
+                      className="underline decoration-rule underline-offset-2 hover:text-gold-dark"
+                    >
+                      {article.authorName ?? "Jan Drishti Editorial Desk"}
+                    </Link>
+                  ) : (
+                    (article.authorName ?? "Jan Drishti Editorial Desk")
+                  )}
+                  {contributorSlug && (
+                    <span className="ml-2 font-sans text-[0.6rem] uppercase tracking-[0.1em] text-gold-dark">
+                      Contributor
+                    </span>
+                  )}
                 </p>
                 <p className="mt-0.5 flex flex-wrap items-center gap-x-2 font-sans text-[0.68rem] text-ink-muted">
                   <time dateTime={article.publishedAt ?? article.updatedAt}>

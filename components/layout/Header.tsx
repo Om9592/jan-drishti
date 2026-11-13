@@ -80,18 +80,18 @@ export function Header({ categories, latestHeadline, viewer }: HeaderProps) {
       {/* Utility strip */}
       <div className="bg-navy text-paper">
         <div className="container-editorial flex h-9 items-center justify-between gap-4 text-[0.6875rem] uppercase tracking-[0.1em]">
-          <div className="flex min-w-0 items-center gap-3">
+          <div className="flex shrink-0 items-center gap-3">
             <time dateTime={new Date().toISOString()} className="whitespace-nowrap text-paper/85" suppressHydrationWarning>
               {today}
             </time>
             <span className="hidden h-3 w-px bg-paper/25 sm:block" aria-hidden="true" />
-            <span className="hidden whitespace-nowrap text-gold sm:block">{t("masthead.independent")}</span>
+            <span className="hidden whitespace-nowrap text-gold xl:block">{t("masthead.independent")}</span>
           </div>
 
           {latestHeadline && (
             <Link
               href={`/article/${latestHeadline.slug}`}
-              className="hidden min-w-0 items-center gap-2 text-paper/75 transition-colors hover:text-paper lg:flex"
+              className="hidden min-w-0 flex-1 items-center justify-center gap-2 overflow-hidden text-paper/75 transition-colors hover:text-paper lg:flex"
             >
               <span className="shrink-0 text-gold">{t("masthead.latestIndicator")}</span>
               <span className="truncate normal-case tracking-normal">{latestHeadline.title}</span>
@@ -213,6 +213,26 @@ export function Header({ categories, latestHeadline, viewer }: HeaderProps) {
               </Link>
             </li>
 
+            <li className="shrink-0">
+              <Link
+                href="/contributors"
+                aria-current={isActive("/contributors") ? "page" : undefined}
+                className={cn(
+                  "group relative flex h-11 items-center px-2.5 font-sans text-[0.68rem] uppercase tracking-[0.11em] transition-colors lg:px-3",
+                  isActive("/contributors") ? "text-navy" : "text-ink-soft hover:text-navy",
+                )}
+              >
+                {t("nav.contributors")}
+                <span
+                  className={cn(
+                    "absolute inset-x-2 bottom-0 h-[2px] bg-navy transition-transform duration-200 ease-editorial",
+                    isActive("/contributors") ? "scale-x-100" : "scale-x-0 group-hover:scale-x-100",
+                  )}
+                  aria-hidden="true"
+                />
+              </Link>
+            </li>
+
             {overflowItems.length > 0 && (
               <li className="relative shrink-0">
                 <details className="group/more">
@@ -300,6 +320,7 @@ export function Header({ categories, latestHeadline, viewer }: HeaderProps) {
                   { href: "/latest", label: t("nav.latest") },
                   ...categories.map((c) => ({ href: `/${c.slug}`, label: c.label })),
                   { href: "/fact-check", label: t("nav.factCheck") },
+                  { href: "/contributors", label: t("nav.contributors") },
                 ].map((item) => (
                   <li key={item.href}>
                     <Link

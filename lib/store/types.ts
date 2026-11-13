@@ -144,6 +144,12 @@ export interface DataStore {
   saveSource(source: FeedSource): Promise<FeedSource>;
 
   listUsers(): Promise<EditorialUser[]>;
+  /** Look up a freelance contributor's public profile by its URL slug. */
+  getContributorBySlug(slug: string): Promise<EditorialUser | null>;
+  updateContributorProfile(
+    id: string,
+    patch: Partial<Pick<EditorialUser, "name" | "slug" | "beats" | "bio" | "location" | "avatarUrl">>,
+  ): Promise<EditorialUser | null>;
   setUserRole(id: string, role: EditorialUser["role"], actor: { id: string; email?: string }): Promise<EditorialUser | null>;
 
   listAuditLogs(limit?: number): Promise<AuditLogEntry[]>;
