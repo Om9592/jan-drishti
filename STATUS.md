@@ -16,7 +16,9 @@ asserted that was not executed. Where something could not be done, it says so pl
 | Contributor desk | `/contribute/desk`, `/contribute/desk/new`, `/contribute/[id]` | ✅ 200 as contributor, 307 to `/login` as anonymous, mobile 390 px clean |
 | Admin queue | `/admin/contributors` as admin | ✅ pending pitch, approve/decline, "awaiting approval" queue with one-click publish, roster |
 | Wire images | home / latest / india / politics / economy / education / health / states / science / environment / technology | ✅ 14 wire cards per page, 2–10 publisher thumbnails each, 0 broken images (Playwright `naturalWidth` check) |
-| Keyless evidence retrieval | POST `/api/research` with no AI or search keys | ✅ 17 results from 4 independent publishers in **0.53 s**; steps show `search done`, `corroborate done` |
+| Keyless evidence retrieval (local + live) | POST `/api/research` with no AI or search keys | ✅ live production: **27 results from 18 publishers**, 12 counted independent, **0.63 s**; steps show `search done`, `corroborate done` |
+| Deployed build | Vercel production, commit `0d820c5` | ✅ READY and promoted to `jan-drishti-navy.vercel.app`; 21-route live sweep 200, 10 sections × 14 wire cards, 3–12 publisher thumbnails each, 0 broken images |
+| Live contributor endpoint | POST `/api/contributors` against production | ✅ real submission stored in Firestore, visible in `/admin/contributors`, then deleted |
 | Independence gate | same run, `independentSources` | ✅ counted and surfaced; verdict held at `unverified` with no AI key, and a model verdict of true/false is downgraded below 3 publishers |
 | Type check / build | `npx tsc --noEmit`, `npm run build` | ✅ clean |
 
