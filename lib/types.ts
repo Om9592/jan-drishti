@@ -112,6 +112,10 @@ export interface Article {
   views?: number;
   seoTitle?: string;
   seoDescription?: string;
+  /** Set on wire items: the canonical URL at the original publisher. */
+  sourceUrl?: string | null;
+  /** Set on wire items: the publisher's name as shown to readers. */
+  sourceName?: string | null;
 }
 
 export interface Claim {

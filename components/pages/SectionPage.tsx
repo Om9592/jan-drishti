@@ -8,6 +8,8 @@ import { SectionHeading } from "@/components/ui/SectionHeading";
 import { getStore } from "@/lib/store";
 import { createTranslator, normaliseLang, LANGUAGE_COOKIE } from "@/lib/i18n";
 import { SAMPLE_STATES } from "@/lib/content/sample";
+import { getWireForCategory, getWirePublishers, mergeWithWire } from "@/lib/ingestion/wire";
+import { WireDisclosure } from "@/components/ui/WireDisclosure";
 import { cn } from "@/lib/utils";
 import type { Article, Category } from "@/lib/types";
 
@@ -61,6 +63,15 @@ export async function SectionPage({
   const state = typeof searchParams.state === "string" ? searchParams.state : "";
   const sort = searchParams.sort === "oldest" ? "oldest" : "latest";
 
+  const isFirstPage = page === 1;
+  const noFilters = !searchParams.q && !state && sort === "latest" && (language === "all" || language === "en");
+
+  const wireItems =
+    categorySlug && isFirstPage && noFilters && !showStateFilter
+      ? await getWireForCategory(categorySlug, PER_PAGE)
+      : [];
+  const wirePublishers = wireItems.length > 0 ? await getWirePublishers() : [];
+
   const result = await store.listArticles({
     status: "published",
     categorySlug,
@@ -73,7 +84,11 @@ export async function SectionPage({
 
   const categories: Category[] = await store.listCategories();
   const category = categories.find((c) => c.slug === categorySlug);
-  const [lead, ...others] = result.items;
+
+  // Own reporting first, then the wire for this section (first page, unfiltered view only).
+  const displayItems =
+    wireItems.length > 0 ? mergeWithWire(result.items, wireItems, PER_PAGE) : result.items;
+  const [lead, ...others] = displayItems;
 
   const states = Array.from(
     new Set([...SAMPLE_STATES, ...result.items.map((a: Article) => a.state).filter(Boolean)]),
@@ -152,9 +167,10 @@ export async function SectionPage({
             </div>
           )}
         </div>
+        {wireItems.length > 0 && <WireDisclosure lang={lang} publishers={wirePublishers} />}
       </header>
 
-      {result.items.length === 0 ? (
+      {displayItems.length === 0 ? (
         <EmptyState
           className="mt-8"
           title={emptyTitle ?? t("empty.articles")}
@@ -184,7 +200,7 @@ export async function SectionPage({
               className="mb-5"
             />
             <div className="grid gap-8 sm:grid-cols-2 lg:grid-cols-3">
-              {(page === 1 && lead ? others.slice(3) : result.items).map((article) => (
+              {(page === 1 && lead ? others.slice(3) : displayItems).map((article) => (
                 <ArticleCard key={article.id} article={article} lang={lang} variant="standard" />
               ))}
             </div>

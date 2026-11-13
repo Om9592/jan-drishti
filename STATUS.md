@@ -24,6 +24,8 @@ asserted that was not executed. Where something could not be done, it says so pl
 | Firebase Firestore | Admin API probe | ✅ database created, rules deployed, 11 sections + 2 sources seeded |
 | Firebase Auth | Identity Toolkit Admin API | ✅ email/password on, anonymous/phone off, Vercel domain authorised |
 | End-to-end Firestore write | POST `/api/submissions` → read back with Admin SDK | ✅ real document + audit log, then cleaned up |
+| Live wire (real news) | 10 RSS feeds fetched server-side, cached 10 min | ✅ The Hindu, Mint, NDTV, RBI — headlines on Top Stories / Latest / every section, attributed and linked out |
+| Responsive check with wire content | 6 routes × 1440/768/390/360 | ✅ no horizontal overflow |
 
 ## 2. Implemented (working code, no external accounts needed to run)
 
@@ -88,7 +90,9 @@ asserted that was not executed. Where something could not be done, it says so pl
 - **Translation editor UI**: schema supports linked EN/HI pairs; managing them is manual.
 - **Licensed news APIs**: adapters are stubbed behind `NEWS_API_KEY`; must be enabled per
   contract.
-- **Real newsroom content**: none, by design. Production shows honest empty states.
+- **Real newsroom content**: none of Jan Drishti's *own* reporting exists yet, by design. What
+  readers see in Top Stories and Latest News is the **wire** — headlines from The Hindu, Mint,
+  NDTV and RBI, labelled as another publisher's reporting and linked to the source.
 - **Perfect objectivity**: not claimed anywhere in the product or these documents.
 - **Public access to every hostname**: Vercel Deployment Protection still covers the
   generated `*.vercel.app` deployment URLs; the `jan-drishti-navy.vercel.app` production

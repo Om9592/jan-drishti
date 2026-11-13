@@ -164,7 +164,26 @@ Try it: `/admin/fact-checks` → *Run research* → review → *Approve & publis
 
 ---
 
-## 6. Ingestion
+## 6. The wire — real headlines, always current
+
+Top Stories, Latest News and every section page lead with Jan Drishti's own published
+reporting and then fill with the **wire**: headlines pulled live from trusted publishers.
+
+| | |
+| --- | --- |
+| Publishers | The Hindu (national, business, education, health, states), Mint (news, politics, economy), NDTV (top stories), Reserve Bank of India (press releases) |
+| Module | `lib/ingestion/wire.ts` — RSS fetched server-side, `next: { revalidate: 600 }` |
+| Refresh | Every ten minutes, on demand; a cold first render warms the cache |
+| What is stored | Headline, ≤240-character attributed summary, publisher, timestamp, canonical URL. **Never** full text and **never** publisher photography |
+| How it is labelled | `kind: "external"` → "Reporting from another publisher" on every card, publisher name in the byline, "Read at source ↗", plus a wire disclosure strip under each section heading |
+| Where it links | Straight to the publisher (`target="_blank"`, `rel="noopener noreferrer nofollow"`). Wire items are never given a Jan Drishti article page |
+| Failure mode | A feed that is down or slow (9 s timeout) is skipped and logged. No placeholder stories are invented |
+
+Own reporting always sorts first; the wire only fills the remainder, and Top Stories items
+are never repeated in Latest News on the same page. Nothing on the wire is verified by this
+newsroom, and nothing on the wire is ever presented as a Jan Drishti fact-check.
+
+## 7. Ingestion
 
 * Sources live in `sources/` and are **disabled by default** — enabling is an editorial act.
 * `lib/ingestion/rss.ts` checks `robots.txt` before fetching, fails closed, de-duplicates
@@ -178,7 +197,7 @@ Try it: `/admin/fact-checks` → *Run research* → review → *Approve & publis
 
 ---
 
-## 7. Security model
+## 8. Security model
 
 * Firebase **session cookies** (httpOnly, `SameSite=Lax`, 5 days) created server-side from
   ID tokens; verification on every request via the Admin SDK.
@@ -199,7 +218,7 @@ nothing is persisted. Configure Firebase before treating any of it as a real new
 
 ---
 
-## 8. Bilingual behaviour
+## 9. Bilingual behaviour
 
 * Language is a cookie (`jd_lang`) read on the server, so SSR and client agree — no flash.
 * Hindi uses Noto Serif/Sans Devanagari with adjusted line-height; typography is tuned per
@@ -210,7 +229,7 @@ nothing is persisted. Configure Firebase before treating any of it as a real new
 
 ---
 
-## 9. Environment variables
+## 10. Environment variables
 
 See `.env.example`. None of the `NEXT_PUBLIC_*` values is a secret (the Firebase web
 config is public by design). `FIREBASE_PRIVATE_KEY`, `AI_API_KEY`, `TAVILY_API_KEY`,
@@ -222,7 +241,7 @@ fact-check desk still works — it just does everything manually, and says so on
 
 ---
 
-## 10. Git / GitHub / deployment status
+## 11. Git / GitHub / deployment status
 
 **GitHub — done.** The repository is public at
 <https://github.com/Om9592/jan-drishti>, `main` branch, 137 files, no secrets committed
@@ -253,7 +272,7 @@ Two honest notes:
    Remaining Firebase work (composite indexes, Storage billing, Google sign-in, first admin
    account) is tracked in `FIREBASE-SETUP.md`.
 
-## 11. Testing
+## 12. Testing
 
 ```bash
 npm run build
@@ -278,12 +297,16 @@ tested route (`documentElement.scrollWidth <= clientWidth`).
 
 ---
 
-## 12. Known limits
+## 13. Known limits
 
 * No payment, subscription or newsletter-delivery integration — the newsletter stores an
   address and nothing else.
 * Ingestion is RSS-first; licensed aggregator APIs are stubbed behind `NEWS_API_KEY` and
   must be enabled per contract terms.
+* The wire depends on those publishers keeping their feeds open. If a feed changes or
+  closes, that publisher silently drops off the wire until `WIRE_FEEDS` is updated —
+  check the server logs for `[wire]` warnings if a source disappears.
+* Wire items carry no imagery by design (publisher photography is not ours to republish).
 * No translation editor UI; `translations` and `translationGroupId` exist in the schema and
   in the admin article editor via the `language` field, but linked-pair management is manual.
 * Rate limiting is per-instance until a shared store is configured.
@@ -291,7 +314,7 @@ tested route (`documentElement.scrollWidth <= clientWidth`).
 
 ---
 
-## 13. Licences and attribution
+## 14. Licences and attribution
 
 Application code in this repository is the project's own work. News content must come from
 configured feeds, licensed APIs, official releases or original reporting — the ingestion

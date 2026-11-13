@@ -9,7 +9,9 @@ import { SectionHeading } from "@/components/ui/SectionHeading";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { VerdictBadge } from "@/components/ui/VerdictBadge";
 import { NewsletterForm } from "@/components/ui/NewsletterForm";
+import { WireDisclosure } from "@/components/ui/WireDisclosure";
 import { formatDate, truncate } from "@/lib/utils";
+import { getWireArticles, getWirePublishers, mergeWithWire } from "@/lib/ingestion/wire";
 
 export default async function HomePage() {
   const cookieStore = await cookies();
@@ -17,7 +19,7 @@ export default async function HomePage() {
   const t = createTranslator(lang);
   const store = getStore();
 
-  const [topStories, latest, underreported, groundReports, factChecks, corrections, categories, stats] =
+  const [topStories, latest, underreported, groundReports, factChecks, corrections, categories, stats, wire, wirePublishers] =
     await Promise.all([
       store.listArticles({ status: "published", limit: 8, sort: "latest" }),
       store.listArticles({ status: "published", limit: 7, sort: "latest" }),
@@ -27,11 +29,22 @@ export default async function HomePage() {
       store.listCorrections(),
       store.listCategories(),
       store.getStats(),
+      getWireArticles(40),
+      getWirePublishers(),
     ]);
 
-  const [lead, ...rest] = topStories.items;
+  // Own reporting always leads; the wire fills the rest, clearly attributed.
+  const topMerged = mergeWithWire(topStories.items, wire, 8);
+  const [lead, ...rest] = topMerged;
   const secondary = rest.slice(0, 2);
   const compact = rest.slice(2, 6);
+  const shownAbove = new Set(topMerged.map((article) => article.id));
+  const leadExtras = wire.filter((article) => !shownAbove.has(article.id)).slice(0, 3);
+  const mergedLatest = mergeWithWire(
+    latest.items,
+    wire.filter((article) => !shownAbove.has(article.id)),
+    12,
+  );
   const todaysCheck = factChecks.items[0];
   const categoryCounts = await Promise.all(
     categories.slice(0, 8).map(async (category) => {
@@ -176,15 +189,26 @@ export default async function HomePage() {
           linkLabel={t("home.seeAll")}
           description={
             lang === "hi"
-              ? "हर ख़बर के साथ उसका स्रोत, तिथि और प्रमाण।"
-              : "Every story carries its source, its date and its evidence."
+              ? "हमारी रिपोर्टिंग पहले; उसके बाद विश्वसनीय प्रकाशकों की सुर्ख़ियाँ, नाम और लिंक के साथ।"
+              : "Our reporting first, then headlines from trusted publishers — named, dated and linked."
           }
         />
+        <WireDisclosure lang={lang} publishers={wirePublishers} />
 
         {lead ? (
           <div className="mt-6 grid gap-8 lg:grid-cols-12 lg:gap-10">
             <div className="lg:col-span-7">
               <ArticleCard article={lead} lang={lang} variant="lead" />
+              {leadExtras.length > 0 && (
+                <div className="mt-8 border-t border-rule pt-3">
+                  <p className="kicker mb-2">
+                    {lang === "hi" ? "वायर से और" : "Also on the wire"}
+                  </p>
+                  {leadExtras.map((article) => (
+                    <ArticleCard key={`lead-x-${article.id}`} article={article} lang={lang} variant="compact" />
+                  ))}
+                </div>
+              )}
             </div>
 
             <div className="lg:col-span-5">
@@ -222,10 +246,10 @@ export default async function HomePage() {
           <div className="lg:col-span-8">
             <SectionHeading title={t("home.latest")} href="/latest" linkLabel={t("home.seeAll")} />
             <div className="mt-6 space-y-6">
-              {latest.items.slice(0, 5).map((article) => (
+              {mergedLatest.slice(0, 6).map((article) => (
                 <ArticleCard key={article.id} article={article} lang={lang} variant="wide" />
               ))}
-              {latest.items.length === 0 && (
+              {mergedLatest.length === 0 && (
                 <EmptyState title={t("empty.articles")} body={t("empty.articlesBody")} />
               )}
             </div>

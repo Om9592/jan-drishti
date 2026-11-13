@@ -36,6 +36,12 @@ function Byline({ article, lang }: { article: Article; lang: Lang }) {
       <time dateTime={article.publishedAt ?? article.updatedAt} suppressHydrationWarning>
         {article.publishedAt ? timeAgo(article.publishedAt, lang) : formatDate(article.updatedAt, lang)}
       </time>
+      {article.sourceUrl && (
+        <>
+          <span className="mx-1.5" aria-hidden="true">·</span>
+          <span className="text-gold-dark">{lang === "hi" ? "मूल स्रोत पर पढ़ें ↗" : "Read at source ↗"}</span>
+        </>
+      )}
     </p>
   );
 }
@@ -56,12 +62,20 @@ export function ArticleCard({
   showImage?: boolean;
 }) {
   const t = createTranslator(lang);
-  const href = `/article/${article.slug}`;
+  // Wire items link out to the publisher; Jan Drishti's own stories stay on-site.
+  const external = Boolean(article.sourceUrl);
+  const href = external ? (article.sourceUrl as string) : `/article/${article.slug}`;
+  const linkProps = external
+    ? { href, target: "_blank", rel: "noopener noreferrer nofollow" }
+    : { href };
+  const showArtwork = showImage && !external;
   const minutes = article.readingMinutes ?? 4;
+  // Some feeds repeat the headline as the description — never print it twice.
+  const dek = (article.summary ?? "").trim() === article.title.trim() ? "" : article.summary;
 
   const Title = ({ className: cls }: { className?: string }) => (
     <h3 className={cn("font-serif font-semibold text-navy", cls)}>
-      <Link href={href} className="headline-link">
+      <Link {...linkProps} className="headline-link">
         {article.title}
       </Link>
     </h3>
@@ -72,13 +86,13 @@ export function ArticleCard({
       <article className={cn("group", className)}>
         <Kicker article={article} lang={lang} />
         <Title className="text-[1.75rem] leading-[1.12] tracking-[-0.01em] sm:text-[2.2rem]" />
-        {article.subtitle && (
+        {(article.subtitle || dek) && (
           <p className="mt-2.5 max-w-2xl font-serif text-[1.02rem] leading-relaxed text-ink-soft sm:text-[1.1rem]">
-            {article.subtitle}
+            {article.subtitle ?? dek}
           </p>
         )}
-        {showImage && (
-          <Link href={href} className="mt-5 block" tabIndex={-1} aria-hidden="true">
+        {showArtwork && (
+          <Link {...linkProps} className="mt-5 block" tabIndex={-1} aria-hidden="true">
             <ArticleImage
               src={article.imageUrl}
               alt=""
@@ -98,20 +112,22 @@ export function ArticleCard({
   if (variant === "feature") {
     return (
       <article className={cn("group", className)}>
-        <Link href={href} className="block" tabIndex={-1} aria-hidden="true">
-          <ArticleImage
-            src={article.imageUrl}
-            alt=""
-            ratio="4/3"
-            label={article.categorySlug?.replace(/-/g, " ")}
-          />
-        </Link>
+        {showArtwork && (
+          <Link {...linkProps} className="block" tabIndex={-1} aria-hidden="true">
+            <ArticleImage
+              src={article.imageUrl}
+              alt=""
+              ratio="4/3"
+              label={article.categorySlug?.replace(/-/g, " ")}
+            />
+          </Link>
+        )}
         <div className="mt-3">
           <Kicker article={article} lang={lang} />
           <Title className="text-[1.35rem] leading-[1.16] sm:text-[1.55rem]" />
-          <p className="mt-2 font-sans text-[0.85rem] leading-relaxed text-ink-muted">
-            {article.summary}
-          </p>
+          {dek && (
+            <p className="mt-2 font-sans text-[0.85rem] leading-relaxed text-ink-muted">{dek}</p>
+          )}
           <Byline article={article} lang={lang} />
         </div>
       </article>
@@ -129,7 +145,7 @@ export function ArticleCard({
           </span>
           <span className="h-2 w-px bg-rule-strong" aria-hidden="true" />
           <span className="font-sans text-[0.68rem] text-ink-muted">
-            {minutes} {t("common.minutes")}
+            {external ? article.sourceName : `${minutes} ${t("common.minutes")}`}
           </span>
         </div>
       </article>
@@ -176,31 +192,41 @@ export function ArticleCard({
 
   if (variant === "wide") {
     return (
-      <article className={cn("group grid gap-4 sm:grid-cols-[minmax(0,1fr)_18rem]", className)}>
+      <article
+        className={cn(
+          "group grid gap-4",
+          showArtwork && "sm:grid-cols-[minmax(0,1fr)_18rem]",
+          className,
+        )}
+      >
         <div>
           <Kicker article={article} lang={lang} />
           <Title className="text-[1.3rem] leading-[1.18] sm:text-[1.45rem]" />
-          <p className="mt-2 font-sans text-[0.88rem] leading-relaxed text-ink-soft">{article.summary}</p>
+          {dek && <p className="mt-2 font-sans text-[0.88rem] leading-relaxed text-ink-soft">{dek}</p>}
           <Byline article={article} lang={lang} />
         </div>
-        <Link href={href} tabIndex={-1} aria-hidden="true" className="order-first sm:order-last">
-          <ArticleImage src={article.imageUrl} alt="" ratio="4/3" sizes="18rem" />
-        </Link>
+        {showArtwork && (
+          <Link {...linkProps} tabIndex={-1} aria-hidden="true" className="order-first sm:order-last">
+            <ArticleImage src={article.imageUrl} alt="" ratio="4/3" sizes="18rem" />
+          </Link>
+        )}
       </article>
     );
   }
 
   return (
     <article className={cn("group", className)}>
-      {showImage && (
-        <Link href={href} tabIndex={-1} aria-hidden="true" className="block">
+      {showArtwork && (
+        <Link {...linkProps} tabIndex={-1} aria-hidden="true" className="block">
           <ArticleImage src={article.imageUrl} alt="" ratio="3/2" sizes="(max-width: 768px) 100vw, 33vw" />
         </Link>
       )}
-      <div className={showImage ? "mt-3" : ""}>
+      <div className={showArtwork ? "mt-3" : ""}>
         <Kicker article={article} lang={lang} />
         <Title className="text-[1.15rem] leading-[1.2] sm:text-[1.25rem]" />
-        <p className="mt-1.5 font-sans text-[0.82rem] leading-relaxed text-ink-muted">{article.summary}</p>
+        {dek && (
+          <p className="mt-1.5 font-sans text-[0.82rem] leading-relaxed text-ink-muted">{dek}</p>
+        )}
         <Byline article={article} lang={lang} />
       </div>
     </article>
