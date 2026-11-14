@@ -79,9 +79,11 @@ function timeAgoShort(iso: string | null | undefined, hi: boolean): string {
  * every model was unavailable, or the search failed. Neither should show a
  * verdict word to the reader.
  */
-function noModelJudged(flags: string[] | undefined): boolean {
-  if (!flags || flags.length === 0) return false;
-  return flags.includes("assembled-reply") || flags.includes("no-evidence") || flags.includes("search-failed");
+function noModelJudged(flags: string[] | undefined, analysts: unknown[] | undefined): boolean {
+  if (flags?.includes("no-evidence") || flags?.includes("search-failed")) return true;
+  // An assembled reply still carries the analysts' verdict when they answered.
+  if (flags?.includes("assembled-reply")) return !analysts || analysts.length === 0;
+  return false;
 }
 
 function newThreadId(): string {
@@ -335,7 +337,7 @@ export function ChatInterface() {
               <div key={message.id} className="border-l-2 border-gold/60 pl-3">
                 {message.result && (
                   <div className="mb-1.5 flex flex-wrap items-center gap-2">
-                    {noModelJudged(message.result.flags) ? (
+                    {noModelJudged(message.result.flags, message.result.analysts) ? (
                       // No model reached a conclusion. Calling that "unverified"
                       // would read as a finding, which is the opposite of what
                       // happened, so the chip says what it is.

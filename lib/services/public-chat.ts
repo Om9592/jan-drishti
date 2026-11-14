@@ -183,6 +183,9 @@ function findingsPrompt(input: {
 function fallbackReply(input: {
   verdict: Verdict;
   confidence: string;
+  /** How many analysts reached this verdict, and how many answered at all. */
+  agreeing?: number;
+  answered?: number;
   supporting: string;
   contradicting: string;
   missing: string;
@@ -192,9 +195,27 @@ function fallbackReply(input: {
   const cite = (n: number) => `[${n}]`;
   const headlines = input.sources.slice(0, 5).map((source) => `${source.publisher}: ${source.title} ${cite(source.n)}`);
 
+  /**
+   * The analysts did reach a verdict even when the writer model failed: saying
+   * "this is not a verdict" would throw away the judgement and contradict the
+   * chip above it.
+   */
+  const agreed = (input.agreeing ?? 0) > 0 && (input.answered ?? 0) > 0;
+  const verdictLine = {
+    en: agreed
+      ? `${input.agreeing} of ${input.answered} model analysts judged this ${input.verdict} with ${input.confidence} confidence on the sources below; the writing model was unavailable, so this is a summary of that judgement rather than a written answer.`
+      : "The models were unavailable for this check, so this is not a verdict — it is what the freshest sources report:",
+    hi: agreed
+      ? `${input.answered} में से ${input.agreeing} मॉडल विश्लेषकों ने नीचे दिए स्रोतों के आधार पर इसे ${input.verdict} माना (विश्वास: ${input.confidence})। लिखने वाला मॉडल उपलब्ध नहीं था, इसलिए यह उस निर्णय का सार है, पूरा लिखा हुआ जवाब नहीं।`
+      : "मॉडल अभी उपलब्ध नहीं थे, इसलिए यह निर्णय नहीं है — यह वही है जो ताज़ा स्रोत कह रहे हैं:",
+    hinglish: agreed
+      ? `${input.answered} mein se ${input.agreeing} model analysts ne neeche diye sources ke aadhar par ise ${input.verdict} maana (confidence: ${input.confidence}). Likhne wala model available nahi tha, isliye yeh us judgment ka summary hai, poora likha jawab nahi.`
+      : "Models abhi available nahi the, isliye yeh verdict nahi hai — yeh wahi hai jo taaza sources keh rahe hain:",
+  };
+
   if (input.language === "hi") {
     return [
-      "मॉडल अभी उपलब्ध नहीं थे, इसलिए यह निर्णय नहीं है — यह वही है जो ताज़ा स्रोत कह रहे हैं:",
+      verdictLine.hi,
       headlines.join(" "),
       input.supporting || input.contradicting || input.missing || "",
       "एक पक्का जवाब देने के लिए ऊपर दिए स्रोत खोलकर देखें; संपादकीय निर्णय के लिए दावा डेस्क को भेजें।",
@@ -204,7 +225,7 @@ function fallbackReply(input: {
   }
   if (input.language === "hinglish") {
     return [
-      "Models abhi available nahi the, isliye yeh verdict nahi hai — yeh wahi hai jo taaza sources keh rahe hain:",
+      verdictLine.hinglish,
       headlines.join(" "),
       input.supporting || input.contradicting || input.missing || "",
       "Pukka jawab ke liye upar diye sources khud kholein; editorial verdict ke liye claim desk ko bhejein.",
@@ -213,7 +234,7 @@ function fallbackReply(input: {
       .join("\n\n");
   }
   return [
-    "The models were unavailable for this check, so this is not a verdict — it is what the freshest sources report:",
+    verdictLine.en,
     headlines.join(" "),
     input.supporting || input.contradicting || input.missing || "",
     "Open the sources above to judge for yourself; send the claim to the desk if you want a signed verdict.",
@@ -354,9 +375,12 @@ export async function runChatTurn(input: {
   let model = streamed ? `${streamed.provider} ${streamed.model}` : report.model ?? null;
   if (!reply) {
     console.warn("[chat] no provider streamed a reply; using the assembled answer");
+    const agreeing = analysts.filter((analyst) => analyst.preliminaryVerdict === report.preliminaryVerdict).length;
     reply = fallbackReply({
       verdict: report.preliminaryVerdict,
       confidence: report.confidence,
+      agreeing,
+      answered: analysts.length,
       supporting: report.supportingSummaryEn ?? "",
       contradicting: report.contradictingSummaryEn ?? "",
       missing: report.missingContextEn ?? "",
