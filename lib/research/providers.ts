@@ -100,22 +100,40 @@ async function aiRequest(messages: AiMessage[], options?: AiOptions): Promise<{ 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const response = await fetch(`${config.ai.baseUrl}/chat/completions`, {
+    const payload = JSON.stringify({
+      model,
+      messages,
+      temperature: options?.temperature ?? 0.1,
+      max_tokens: options?.maxTokens ?? 1800,
+      ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
+      ...(options?.json ? { response_format: { type: "json_object" } } : {}),
+    });
+    let response = await fetch(`${config.ai.baseUrl}/chat/completions`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${config.ai.apiKey}`,
       },
-      body: JSON.stringify({
-        model,
-        messages,
-        temperature: options?.temperature ?? 0.1,
-        max_tokens: options?.maxTokens ?? 1800,
-        ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
-        ...(options?.json ? { response_format: { type: "json_object" } } : {}),
-      }),
+      body: payload,
       signal: controller.signal,
     });
+    // Free-tier keys are rate limited per minute and the fleet is often busy:
+    // one short pause is usually enough, and waiting is cheaper than giving up.
+    for (const wait of [4000, 8000]) {
+      if (response.ok || (response.status !== 429 && response.status < 500)) break;
+      const jitter = wait + Math.floor(Math.random() * 1500);
+      console.warn("[ai] busy", response.status, `- retrying in ${jitter}ms`);
+      await new Promise((resolve) => setTimeout(resolve, jitter));
+      response = await fetch(`${config.ai.baseUrl}/chat/completions`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${config.ai.apiKey}`,
+        },
+        body: payload,
+        signal: controller.signal,
+      });
+    }
     if (!response.ok) {
       const body = await response.text().catch(() => "");
       console.error("[ai] provider error", response.status, body.slice(0, 400));

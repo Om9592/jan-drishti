@@ -264,7 +264,7 @@ export async function runResearch(input: ResearchInput): Promise<ResearchResult>
           maxTokens: 1400,
           // Extraction is an accelerator, not a dependency: if the provider is
           // slow we keep the request fast and fall back to deterministic queries.
-          timeoutMs: 25_000,
+          timeoutMs: 30_000,
           retryOnTruncation: false,
         },
       );
@@ -503,7 +503,11 @@ export async function runResearch(input: ResearchInput): Promise<ResearchResult>
         setStep("draft", "done", "Evidence attached for manual review. No automatic recommendation.");
       }
     } else {
-      setStep("compare", "unavailable", "AI provider did not respond. Evidence attached for manual review.");
+      setStep(
+        "compare",
+        "unavailable",
+        `AI synthesis unavailable (${aiNotice ?? "no response"}). Evidence attached for manual review.`,
+      );
       setStep("context", "unavailable");
       setStep("draft", "done", "Evidence attached for manual review. No automatic recommendation.");
     }
