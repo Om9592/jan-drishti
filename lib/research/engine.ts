@@ -400,17 +400,34 @@ export async function runResearch(input: ResearchInput): Promise<ResearchResult>
   );
   if (isAiConfigured() && (devanagari || hinglish)) {
     try {
-      const translated = await aiComplete(
-        [
-          {
-            role: "system",
-            content:
-              "Translate the claim into English search queries for a news index. Reply with up to 3 queries, one per line, each 2-6 words, no numbering, no quotes, no commentary.",
-          },
-          { role: "user", content: input.claimText.slice(0, 500) },
-        ],
-        { temperature: 0, maxTokens: 120, timeoutMs: 8_000 },
-      );
+      const translateMessages = [
+        {
+          role: "system" as const,
+          content:
+            "Translate the claim into English search queries for a news index. Reply with up to 3 queries, one per line, each 2-6 words, no numbering, no quotes, no commentary.",
+        },
+        { role: "user" as const, content: input.claimText.slice(0, 500) },
+      ];
+      let translated = null as Awaited<ReturnType<typeof aiComplete>>;
+      try {
+        translated = await aiComplete(translateMessages, { temperature: 0, maxTokens: 120, timeoutMs: 8_000 });
+      } catch (primaryError) {
+        /**
+         * A Hindi or Hinglish claim cannot be searched without English terms, and
+         * this prompt is a single sentence — cheap enough for the keyless model
+         * even when every keyed provider is exhausted.
+         */
+        const keyless = config.ai.chain.find((endpoint) => endpoint.keyless);
+        console.warn("[research] translation retry on the keyless model:", (primaryError as Error).message);
+        if (keyless) {
+          translated = await aiComplete(translateMessages, {
+            prefer: keyless.name,
+            temperature: 0,
+            maxTokens: 120,
+            timeoutMs: 25_000,
+          });
+        }
+      }
       const english = (translated?.text ?? "")
         .split("\n")
         .map((line) => line.replace(/^[-*\d.\s]+/, "").trim())
@@ -433,7 +450,26 @@ export async function runResearch(input: ResearchInput): Promise<ResearchResult>
   const startedAt = Date.now();
   const querySet = queries.slice(0, 4);
 
-  const keyless = await retrieveEvidence(querySet, 8);
+  let keyless = await retrieveEvidence(querySet, 8);
+
+  /**
+   * A phrasing the index does not carry ("Buddha relics in Namsai") returns
+   * nothing at all. Before telling the reader the search failed, try the two
+   * words that carry the claim: a place and a thing.
+   */
+  if (keyless.hits.length === 0) {
+    const bare = Array.from(
+      new Set(
+        (input.claimText.toLowerCase().match(/[a-z\u0900-\u097F][a-z\u0900-\u097F'-]{3,}/g) ?? []).filter(
+          (word) => !/^(kya|sach|hai|hain|nahi|mein|that|this|with|from|have|has|been|about|claim|news|true|false|said|will)\b/.test(word),
+        ),
+      ),
+    ).slice(0, 3);
+    if (bare.length >= 2) {
+      console.warn(`[research] nothing for the first queries; retrying with "${bare.join(" ")}"`);
+      keyless = await retrieveEvidence([bare.join(" "), bare.slice(0, 2).join(" ")], 8, null);
+    }
+  }
 
   const hits: SearchHit[] = [];
   const seenUrls = new Set<string>();
@@ -614,8 +650,20 @@ export async function runResearch(input: ResearchInput): Promise<ResearchResult>
   }
   if (offTopic.length > 0) {
     console.warn(`[research] dropped ${offTopic.length} off-topic result(s):`, offTopic.slice(0, 3).join(" | "));
+    const dropped = hits.filter((hit) => !relevant.includes(hit));
     hits.length = 0;
     hits.push(...relevant);
+    /**
+     * An empty evidence set reads to the reader as "the check did not run",
+     * which is worse than "the closest reporting I could find is this". Keep the
+     * best few loose matches, and let the thin-sourcing flag say the match is
+     * weak.
+     */
+    if (relevant.length === 0 && dropped.length > 0) {
+      dropped.sort((a, b) => (specificity.get(b.url) ?? 0) - (specificity.get(a.url) ?? 0));
+      hits.push(...dropped.slice(0, 3));
+      console.warn("[research] no exact match; keeping the 3 closest items so the answer can show what it read");
+    }
   }
 
   // Order matters more than filtering: the prompt only carries the strongest ten
