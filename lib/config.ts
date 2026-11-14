@@ -21,8 +21,12 @@ const AI_PRESETS = {
   openai: { name: "openai", baseUrl: "https://api.openai.com/v1", model: "gpt-4o-mini" },
   gemini: {
     name: "gemini",
+    // Google retires Gemini model ids regularly (2.0/2.5-flash now 404 for new
+    // keys), so this is only a starting point: set AI_MODEL to whatever
+    // `models.list` reports for your key, and a 404 is surfaced in the UI
+    // rather than silently producing an empty answer.
     baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
-    model: "gemini-2.0-flash",
+    model: "gemini-3.5-flash",
   },
   groq: { name: "groq", baseUrl: "https://api.groq.com/openai/v1", model: "llama-3.3-70b-versatile" },
   openrouter: { name: "openrouter", baseUrl: "https://openrouter.ai/api/v1", model: "google/gemini-2.0-flash-001" },
@@ -61,6 +65,12 @@ export const config = {
     provider: AI_PRESET.name,
     /** Optional secondary model used only for translation drafting. */
     translationModel: env("AI_TRANSLATION_MODEL"),
+    /**
+     * Reasoning-capable models can spend minutes "thinking" before emitting the
+     * first token. That is fine for prose and fatal for a JSON pipeline that has
+     * a request deadline, so structured calls ask for the smallest effort.
+     */
+    reasoningEffort: env("AI_REASONING_EFFORT") ?? "minimal",
   },
   search: {
     tavilyKey: env("TAVILY_API_KEY"),

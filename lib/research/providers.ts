@@ -42,15 +42,63 @@ export function isGovernmentSource(url: string): boolean {
   return ["government", "primary_record"].includes(classifySource(url));
 }
 
+interface AiOptions {
+  temperature?: number;
+  json?: boolean;
+  maxTokens?: number;
+  model?: string;
+  /** Hard deadline per attempt. Structured pipeline calls set this explicitly. */
+  timeoutMs?: number;
+  /** "minimal" | "low" | "medium" | "high"; omitted when undefined. */
+  reasoningEffort?: string | null;
+  /** Retry once with a bigger budget when the answer was cut off mid-JSON. */
+  retryOnTruncation?: boolean;
+}
+
 /** OpenAI-compatible chat completion. Returns null when no key is configured. */
-export async function aiComplete(
-  messages: AiMessage[],
-  options?: { temperature?: number; json?: boolean; maxTokens?: number; model?: string },
-): Promise<{ text: string; model: string } | null> {
+export async function aiComplete(messages: AiMessage[], options?: AiOptions): Promise<{ text: string; model: string } | null> {
   if (!isAiConfigured()) return null;
+  const first = await aiRequest(messages, options);
+  // A dead provider (timeout, 5xx, network) is not worth a second wait: that
+  // only doubles the latency of a request the editor is staring at.
+  if (!first) return null;
+  if (first.finishReason !== "length" && !looksTruncated(first.text)) return first;
+  if (options?.retryOnTruncation === false) return first;
+  /**
+   * Reasoning-capable models spend part of the completion budget on internal
+   * thinking and can return an empty `content` with finish_reason "length".
+   * One retry with a much larger budget fixes that without guessing.
+   */
+  return aiRequest(messages, { ...options, maxTokens: Math.max((options?.maxTokens ?? 1800) * 2, 3000) });
+}
+
+export class AiError extends Error {
+  constructor(
+    message: string,
+    readonly status?: number,
+  ) {
+    super(message);
+    this.name = "AiError";
+  }
+}
+
+function looksTruncated(text: string): boolean {
+  const trimmed = text.trim();
+  if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return false;
+  let depth = 0;
+  for (const char of trimmed) {
+    if (char === "{" || char === "[") depth += 1;
+    else if (char === "}" || char === "]") depth -= 1;
+  }
+  return depth !== 0;
+}
+
+async function aiRequest(messages: AiMessage[], options?: AiOptions): Promise<{ text: string; model: string; finishReason?: string } | null> {
   const model = options?.model ?? config.ai.model;
+  const timeoutMs = options?.timeoutMs ?? 45_000;
+  const reasoningEffort = options?.reasoningEffort === undefined ? config.ai.reasoningEffort : options.reasoningEffort;
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 45_000);
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const response = await fetch(`${config.ai.baseUrl}/chat/completions`, {
       method: "POST",
@@ -63,23 +111,44 @@ export async function aiComplete(
         messages,
         temperature: options?.temperature ?? 0.1,
         max_tokens: options?.maxTokens ?? 1800,
+        ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
         ...(options?.json ? { response_format: { type: "json_object" } } : {}),
       }),
       signal: controller.signal,
     });
     if (!response.ok) {
-      console.error("[ai] provider error", response.status, await response.text().catch(() => ""));
-      return null;
+      const body = await response.text().catch(() => "");
+      console.error("[ai] provider error", response.status, body.slice(0, 400));
+      // Model ids get retired: say so loudly instead of returning "no answer".
+      if (response.status === 404 && /model/i.test(body)) {
+        throw new AiError(
+          `The configured model "${model}" is not available to this API key. Set AI_MODEL to a model your key lists.`,
+          404,
+        );
+      }
+      if (response.status === 401 || response.status === 403) {
+        throw new AiError("The AI provider rejected the API key.", response.status);
+      }
+      throw new AiError(`The AI provider returned HTTP ${response.status}.`, response.status);
     }
     const data = (await response.json()) as {
-      choices?: { message?: { content?: string } }[];
+      choices?: { message?: { content?: string }; finish_reason?: string }[];
     };
-    const text = data.choices?.[0]?.message?.content;
-    if (!text) return null;
-    return { text, model };
+    const choice = data.choices?.[0];
+    const text = choice?.message?.content;
+    if (!text) {
+      console.error("[ai] empty completion", choice?.finish_reason);
+      throw new AiError(`The model returned no text (finish_reason: ${choice?.finish_reason ?? "unknown"}).`, 502);
+    }
+    return { text, model, finishReason: choice?.finish_reason };
   } catch (error) {
-    console.error("[ai] request failed", error);
-    return null;
+    if (error instanceof AiError) throw error;
+    if ((error as Error)?.name === "AbortError") {
+      console.error("[ai] timeout after", timeoutMs, "ms");
+      throw new AiError(`The AI provider did not answer within ${Math.round(timeoutMs / 1000)}s.`, 408);
+    }
+    console.error("[ai] request failed", (error as Error)?.message ?? error);
+    throw new AiError("The AI provider request failed (network error).", 502);
   } finally {
     clearTimeout(timeout);
   }
@@ -178,7 +247,8 @@ export async function webSearch(query: string, limit = 6): Promise<SearchHit[]> 
  */
 export async function extractImageText(base64: string, mime: string): Promise<string | null> {
   if (!isAiConfigured()) return null;
-  const result = await aiComplete(
+  try {
+    const result = await aiComplete(
     [
       {
         role: "system",
@@ -190,7 +260,11 @@ export async function extractImageText(base64: string, mime: string): Promise<st
         content: `Transcribe all legible text from this image.\n\n![image](data:${mime};base64,${base64})`,
       },
     ],
-    { temperature: 0, maxTokens: 800 },
-  );
-  return result?.text ?? null;
+      { temperature: 0, maxTokens: 800, timeoutMs: 60_000, retryOnTruncation: false },
+    );
+    return result?.text ?? null;
+  } catch (error) {
+    console.error("[ocr] transcription failed", (error as Error)?.message ?? error);
+    return null;
+  }
 }

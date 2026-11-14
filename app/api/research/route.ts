@@ -8,6 +8,11 @@ import { createResearchDraft } from "@/lib/services/research-service";
 import { researchCapabilities } from "@/lib/research/engine";
 
 export const dynamic = "force-dynamic";
+/**
+ * The research pipeline talks to a reasoning model, then to four keyless news
+ * indexes, then to the model again. That does not fit in the default budget.
+ */
+export const maxDuration = 300;
 
 /**
  * Runs the AI-assisted research pipeline for a claim and creates a reviewable

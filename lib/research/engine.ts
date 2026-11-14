@@ -132,6 +132,31 @@ function fallbackQueries(claimText: string): { claims: ResearchReport["extracted
   };
 }
 
+/**
+ * Models wrap JSON in code fences, add a sentence before it, or emit trailing
+ * commentary. Pull the first JSON object out and parse that, instead of failing
+ * the whole step on a stray backtick.
+ */
+function parseJsonLoose(text: string): unknown {
+  const cleaned = text.replace(/^\s*```(?:json)?/i, "").replace(/```\s*$/i, "").trim();
+  try {
+    return JSON.parse(cleaned);
+  } catch {
+    // fall through
+  }
+  const start = cleaned.indexOf("{");
+  const end = cleaned.lastIndexOf("}");
+  if (start >= 0 && end > start) {
+    const slice = cleaned.slice(start, end + 1);
+    try {
+      return JSON.parse(slice);
+    } catch {
+      // fall through
+    }
+  }
+  return null;
+}
+
 const aiExtractionSchema = z.object({
   claims: z
     .array(
@@ -215,8 +240,11 @@ export async function runResearch(input: ResearchInput): Promise<ResearchResult>
   let queries = fallback.queries;
   let entities = fallback.entities;
 
+  let aiNotice: string | null = null;
   if (isAiConfigured()) {
-    const extraction = await aiComplete(
+    let extraction: { text: string; model: string } | null = null;
+    try {
+      extraction = await aiComplete(
       [
         {
           role: "system",
@@ -230,11 +258,23 @@ export async function runResearch(input: ResearchInput): Promise<ResearchResult>
         },
         { role: "user", content: `CLAIM (${input.language}):\n${input.claimText}\n\nCONTEXT URL: ${input.url ?? "none"}` },
       ],
-      { json: true, temperature: 0, maxTokens: 900 },
-    );
+        {
+          json: true,
+          temperature: 0,
+          maxTokens: 1400,
+          // Extraction is an accelerator, not a dependency: if the provider is
+          // slow we keep the request fast and fall back to deterministic queries.
+          timeoutMs: 25_000,
+          retryOnTruncation: false,
+        },
+      );
+    } catch (error) {
+      aiNotice = (error as Error).message;
+      console.error("[research] extraction failed:", aiNotice);
+    }
     if (extraction) {
       try {
-        const parsed = aiExtractionSchema.parse(JSON.parse(extraction.text));
+        const parsed = aiExtractionSchema.parse(parseJsonLoose(extraction.text));
         if (parsed.claims.length > 0) claims = parsed.claims;
         if (parsed.queries.length > 0) queries = parsed.queries.slice(0, 6);
         if (parsed.entities.length > 0) entities = parsed.entities.slice(0, 12);
@@ -247,7 +287,11 @@ export async function runResearch(input: ResearchInput): Promise<ResearchResult>
         setStep("queries", "done");
       }
     } else {
-      setStep("extract", "unavailable", "AI provider did not respond; deterministic extraction used.");
+      setStep(
+        "extract",
+        "unavailable",
+        `AI extraction unavailable (${aiNotice ?? "no response"}); deterministic extraction used.`,
+      );
       setStep("entities", "done");
       setStep("queries", "done");
     }
@@ -375,8 +419,10 @@ export async function runResearch(input: ResearchInput): Promise<ResearchResult>
   report.searchMode = searchMode;
 
   if (isAiConfigured() && evidence.length > 0) {
-    const synthesis = await aiComplete(
-      [
+    let synthesis: { text: string; model: string } | null = null;
+    try {
+      synthesis = await aiComplete(
+        [
         {
           role: "system",
           content: [
@@ -388,6 +434,7 @@ export async function runResearch(input: ResearchInput): Promise<ResearchResult>
             "Treat syndicated copies of one wire story as a single source, not several.",
             "Return strict JSON: {\"supportingSummaryEn\":\"\",\"contradictingSummaryEn\":\"\",\"missingContextEn\":\"\",\"preliminaryVerdict\":\"unverified\",\"confidence\":\"low\",\"evidenceNotes\":[{\"url\":\"\",\"stance\":\"supports|contradicts|context\",\"noteEn\":\"\"}]}",
             "Write in plain English for an editor. No verdict is final; a human decides.",
+            "Keep it short: each summary at most 60 words, missingContext at most 60 words, at most 8 evidenceNotes, each note at most 20 words. Output must be one complete JSON object.",
           ].join(" "),
         },
         {
@@ -397,12 +444,22 @@ export async function runResearch(input: ResearchInput): Promise<ResearchResult>
             .join("\n\n")}`,
         },
       ],
-      { json: true, temperature: 0.1, maxTokens: 1600 },
-    );
+        {
+          json: true,
+          temperature: 0.1,
+          maxTokens: 2600,
+          // The verdict is the point of the run, so this call waits much longer.
+          timeoutMs: 120_000,
+        },
+      );
+    } catch (error) {
+      aiNotice = (error as Error).message;
+      console.error("[research] synthesis failed:", aiNotice);
+    }
 
     if (synthesis) {
       try {
-        const parsed = aiSynthesisSchema.parse(JSON.parse(synthesis.text));
+        const parsed = aiSynthesisSchema.parse(parseJsonLoose(synthesis.text));
         report = {
           ...report,
           model: synthesis.model,
@@ -434,7 +491,13 @@ export async function runResearch(input: ResearchInput): Promise<ResearchResult>
         setStep("compare", "done", "Supporting and contradicting evidence compared by model; editor must verify each item.");
         setStep("context", "done");
         setStep("draft", "done", `Preliminary recommendation: ${parsed.preliminaryVerdict} (${parsed.confidence} confidence).`);
-      } catch {
+      } catch (parseError) {
+        console.error(
+          "[research] synthesis output rejected:",
+          (parseError as Error).message.slice(0, 300),
+          "| raw:",
+          (synthesis.text ?? "").slice(0, 400),
+        );
         setStep("compare", "unavailable", "Model output failed schema validation; no preliminary verdict generated.");
         setStep("context", "unavailable");
         setStep("draft", "done", "Evidence attached for manual review. No automatic recommendation.");
@@ -444,6 +507,17 @@ export async function runResearch(input: ResearchInput): Promise<ResearchResult>
       setStep("context", "unavailable");
       setStep("draft", "done", "Evidence attached for manual review. No automatic recommendation.");
     }
+  } else if (evidence.length > 0 && aiNotice) {
+    report.missingContextEn = [
+      `The AI provider could not be used: ${aiNotice}`,
+      "The evidence file below is complete and real; an editor must write the finding manually (or fix the model configuration and re-run).",
+      report.missingContextEn,
+    ]
+      .filter(Boolean)
+      .join("\n\n");
+    setStep("compare", "unavailable", aiNotice);
+    setStep("context", "unavailable");
+    setStep("draft", "done", "Evidence attached for manual review. AI configuration needs attention.");
   } else if (evidence.length > 0) {
     report.missingContextEn =
       "Evidence was retrieved but no AI provider is configured to compare it. An editor must assess the items manually.";
