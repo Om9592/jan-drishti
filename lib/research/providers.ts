@@ -53,6 +53,8 @@ interface AiOptions {
   reasoningEffort?: string | null;
   /** Retry once with a bigger budget when the answer was cut off mid-JSON. */
   retryOnTruncation?: boolean;
+  /** Try this provider first (used to hand the re-check to a specific model). */
+  prefer?: string;
 }
 
 export interface AiAnswer {
@@ -83,7 +85,12 @@ export class AiError extends Error {
  * every reason, so an editor can tell "quota" from "bad key".
  */
 export async function aiComplete(messages: AiMessage[], options?: AiOptions): Promise<AiAnswer | null> {
-  const chain = config.ai.chain;
+  const chain = options?.prefer
+    ? [
+        ...config.ai.chain.filter((endpoint) => endpoint.name === options.prefer),
+        ...config.ai.chain.filter((endpoint) => endpoint.name !== options.prefer),
+      ]
+    : config.ai.chain;
   if (chain.length === 0) return null;
 
   const budget = options?.timeoutMs ?? 60_000;
@@ -229,6 +236,12 @@ async function aiRequest(
       }
       if (response.status === 401 || response.status === 403) {
         throw new AiError("The provider rejected the API key.", response.status);
+      }
+      if (response.status === 413) {
+        throw new AiError(
+          "The request is larger than this model's per-minute token limit (free tiers are small). Shorter evidence or a bigger tier fixes it.",
+          413,
+        );
       }
       if (response.status === 402 || response.status === 429) {
         const retryAfter = Number((body.match(/retry after (\d+)\s*s/i) ?? [])[1] ?? NaN);
@@ -381,6 +394,48 @@ export async function extractImageText(base64: string, mime: string): Promise<st
     console.error("[ocr] transcription failed", (error as Error)?.message ?? error);
     return null;
   }
+}
+
+export interface FanoutResult {
+  provider: string;
+  label: string;
+  answer: AiAnswer | null;
+  error?: string;
+}
+
+/**
+ * Ask several providers the same question at the same time, independently.
+ * Each model answers on its own — no model sees another's answer — so the
+ * reports can be compared rather than chained. Keyed providers are preferred;
+ * the keyless endpoint fills in when there are not enough of them.
+ */
+export async function aiFanout(
+  messages: AiMessage[],
+  options?: AiOptions & { limit?: number },
+): Promise<FanoutResult[]> {
+  const limit = Math.max(2, options?.limit ?? config.ai.analysts);
+  const order = config.ai.analystEndpoints;
+  const timeoutMs = options?.timeoutMs ?? 60_000;
+
+  const ask = async (endpoint: (typeof order)[number]): Promise<FanoutResult> => {
+    try {
+      const answer = await attempt(endpoint, messages, { ...options, retryOnTruncation: false }, timeoutMs);
+      return { provider: endpoint.name, label: endpoint.label, answer };
+    } catch (error) {
+      return { provider: endpoint.name, label: endpoint.label, answer: null, error: (error as Error).message };
+    }
+  };
+
+  // First wave: the best providers, in parallel. Later waves only run when a
+  // provider above was dead — the point is two answers, not two attempts.
+  const results: FanoutResult[] = [];
+  let asked = 0;
+  while (results.filter((result) => result.answer).length < limit && asked < order.length) {
+    const wave = order.slice(asked, asked + Math.min(3, limit - results.filter((r) => r.answer).length + 1));
+    asked += wave.length;
+    results.push(...(await Promise.all(wave.map(ask))));
+  }
+  return results;
 }
 
 export interface ProviderProbe {

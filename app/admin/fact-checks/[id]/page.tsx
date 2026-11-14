@@ -130,6 +130,41 @@ export default async function AdminFactCheckReviewPage({
                 </div>
               </dl>
 
+              {fc.research.analysts && fc.research.analysts.length > 0 ? (
+                <div className="mt-4 border-t border-rule pt-3">
+                  <h4 className="font-sans text-[0.6rem] uppercase tracking-[0.1em] text-ink-muted">
+                    Cross-check · {fc.research.analysts.length} independent model
+                    {fc.research.analysts.length === 1 ? "" : "s"}
+                  </h4>
+                  <ul className="mt-2 space-y-2">
+                    {fc.research.analysts.map((analyst) => (
+                      <li key={`${analyst.provider}-${analyst.model}`} className="border border-rule p-2">
+                        <div className="flex flex-wrap items-baseline justify-between gap-x-2">
+                          <span className="font-sans text-[0.72rem] font-medium text-navy">{analyst.provider}</span>
+                          <span className="font-sans text-[0.62rem] text-ink-muted">{analyst.model}</span>
+                        </div>
+                        <p className="mt-1 font-sans text-[0.72rem] text-ink-soft">
+                          {analyst.preliminaryVerdict} · {analyst.confidence} confidence ·{" "}
+                          <span className={analyst.agreesWithFinal ? "text-verdict-true" : "text-verdict-false"}>
+                            {analyst.agreesWithFinal ? "agrees with final" : "dissented"}
+                          </span>
+                        </p>
+                        {analyst.missingContextEn ? (
+                          <p className="mt-1 font-sans text-[0.68rem] leading-relaxed text-ink-muted">
+                            {analyst.missingContextEn}
+                          </p>
+                        ) : null}
+                      </li>
+                    ))}
+                  </ul>
+                  {fc.research.adjudicator ? (
+                    <p className="mt-2 font-sans text-[0.66rem] leading-relaxed text-ink-muted">
+                      Re-check: {fc.research.adjudicator}
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
+
               <h4 className="mt-4 font-sans text-[0.6rem] uppercase tracking-[0.1em] text-ink-muted">
                 Pipeline log
               </h4>

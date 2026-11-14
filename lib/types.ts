@@ -155,6 +155,22 @@ export interface ResearchStep {
   detail?: string;
 }
 
+/**
+ * One model's independent read of the evidence. Several are collected per run,
+ * none of them having seen the others, and then re-checked.
+ */
+export interface AnalystAssessment {
+  provider: string;
+  model: string;
+  preliminaryVerdict: Verdict;
+  confidence: "low" | "medium" | "high";
+  supportingSummaryEn: string;
+  contradictingSummaryEn: string;
+  missingContextEn: string;
+  /** Set after the re-check: did this analyst land on the final verdict? */
+  agreesWithFinal: boolean;
+}
+
 export interface ResearchReport {
   id: string;
   claimId: string;
@@ -181,6 +197,10 @@ export interface ResearchReport {
   durationMs?: number;
   /** Where the evidence came from: paid search keys, keyless retrievers, or both. */
   searchMode?: "keyed" | "keyless" | "both" | "none";
+  /** Every model that judged the evidence independently, in the order asked. */
+  analysts?: AnalystAssessment[];
+  /** Who re-checked the analysts, and what they concluded. */
+  adjudicator?: string;
 }
 
 export interface FactCheck {

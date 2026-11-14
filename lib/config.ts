@@ -31,7 +31,7 @@ const AI_PRESETS = {
   // Free tiers, in the order they are worth reaching for: Groq is fast and
   // generous, OpenRouter's ":free" models need no card, Cerebras is small but
   // quick. Any of these keys present in the environment joins the chain.
-  groq: { name: "groq", baseUrl: "https://api.groq.com/openai/v1", model: "llama-3.3-70b-versatile" },
+  groq: { name: "groq", baseUrl: "https://api.groq.com/openai/v1", model: "openai/gpt-oss-120b" },
   openrouter: { name: "openrouter", baseUrl: "https://openrouter.ai/api/v1", model: "meta-llama/llama-3.3-70b-instruct:free" },
   cerebras: { name: "cerebras", baseUrl: "https://api.cerebras.ai/v1", model: "llama3.1-8b" },
   mistral: { name: "mistral", baseUrl: "https://api.mistral.ai/v1", model: "mistral-small-latest" },
@@ -114,6 +114,48 @@ function buildAiChain(): AiEndpoint[] {
 const AI_CHAIN = buildAiChain();
 const AI_PRIMARY = AI_CHAIN[0];
 
+/** The key that belongs to a preset, whichever env var it lives in. */
+function keyForPreset(name: PresetName): string | undefined {
+  if (name === AI_PRESET.name) return env("AI_API_KEY") ?? env("OPENAI_API_KEY");
+  const custom = env(`${name.toUpperCase()}_API_KEY`);
+  if (custom) return custom;
+  return name === "openai" ? env("OPENAI_API_KEY") : undefined;
+}
+
+/**
+ * The cross-check bench. Every keyed provider is one voice, and a provider that
+ * serves several model families gets a second voice — one vendor's small model
+ * and its large one disagree often enough to be worth asking separately.
+ * `AI_ANALYST_MODELS` spells them out: "groq:qwen/qwen3.8-27b,groq:openai/gpt-oss-20b".
+ */
+function buildAnalystEndpoints(chain: AiEndpoint[]): AiEndpoint[] {
+  const endpoints = chain.filter((endpoint) => !endpoint.keyless).map((endpoint) => ({ ...endpoint }));
+  const specs = (env("AI_ANALYST_MODELS") ?? "groq:qwen/qwen3.8-27b")
+    .split(",")
+    .map((spec) => spec.trim())
+    .filter(Boolean);
+  for (const spec of specs) {
+    const separator = spec.indexOf(":");
+    if (separator < 1) continue;
+    const provider = spec.slice(0, separator).trim() as PresetName;
+    const model = spec.slice(separator + 1).trim();
+    const preset = AI_PRESETS[provider];
+    const apiKey = keyForPreset(provider);
+    if (!preset || !model || !apiKey) continue;
+    if (endpoints.some((endpoint) => endpoint.name === provider && endpoint.model === model)) continue;
+    endpoints.push({
+      name: provider,
+      label: `${provider} (${model})`,
+      baseUrl: preset.baseUrl.replace(/\/$/, ""),
+      apiKey,
+      model,
+      keyless: false,
+    });
+  }
+  // The keyless endpoint is a real (if slow) voice of its own.
+  return [...endpoints, ...chain.filter((endpoint) => endpoint.keyless)];
+}
+
 const firebaseProjectId = env("FIREBASE_PROJECT_ID") ?? env("NEXT_PUBLIC_FIREBASE_PROJECT_ID");
 const firebaseClientKey =
   env("NEXT_PUBLIC_FIREBASE_API_KEY") ?? env("FIREBASE_API_KEY");
@@ -139,6 +181,8 @@ export const config = {
   ai: {
     /** Providers in failover order; the first entry is the primary. */
     chain: AI_CHAIN,
+    /** Everyone who gets asked to judge the evidence, independently. */
+    analystEndpoints: buildAnalystEndpoints(AI_CHAIN),
     apiKey: AI_PRIMARY?.apiKey ?? undefined,
     baseUrl: AI_PRIMARY?.baseUrl ?? "",
     model: AI_PRIMARY?.model ?? "",
@@ -157,6 +201,15 @@ export const config = {
      * works from deterministic queries, and free tiers allow 20 calls a day.
      */
     aiExtraction: env("RESEARCH_AI_EXTRACTION") === "1",
+    /**
+     * Verification is a cross-examination, not a single opinion: every claim is
+     * read independently by this many providers, then re-checked once against
+     * their answers. Two is the floor — one model agreeing with itself is not
+     * verification.
+     */
+    analysts: Math.max(2, Number(env("AI_ANALYSTS") ?? 2)),
+    /** Provider that re-checks the analysts. Groq is fast and free; else primary. */
+    adjudicator: env("AI_ADJUDICATOR") ?? "",
   },
   search: {
     tavilyKey: env("TAVILY_API_KEY"),

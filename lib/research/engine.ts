@@ -2,9 +2,10 @@ import "server-only";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { config, isAiConfigured, isSearchConfigured } from "@/lib/config";
-import { aiComplete, classifySource, webSearch, type SearchHit } from "@/lib/research/providers";
+import { aiComplete, aiFanout, classifySource, webSearch, type SearchHit } from "@/lib/research/providers";
 import { independentPublishers, retrieveEvidence } from "@/lib/research/keyless";
 import type {
+  AnalystAssessment,
   Evidence,
   Language,
   ResearchReport,
@@ -171,6 +172,48 @@ const aiExtractionSchema = z.object({
   queries: z.array(z.string()).default([]),
   primaryDocumentHint: z.string().optional(),
 });
+
+const VERDICTS = ["verified_true", "false", "misleading", "unverified", "outdated", "disputed"] as const;
+const STANCES = ["supports", "contradicts", "context"] as const;
+
+/**
+ * Small models drift on enum values and invent stances ("other", "neutral").
+ * Repair what is repairable before throwing away a whole model's assessment —
+ * the summaries are the valuable part, the notes are decoration.
+ */
+function parseAssessment(text: string): z.infer<typeof aiSynthesisSchema> | null {
+  const raw = parseJsonLoose(text);
+  const strict = aiSynthesisSchema.safeParse(raw);
+  if (strict.success) return strict.data;
+  if (!raw || typeof raw !== "object") return null;
+  const source = raw as Record<string, unknown>;
+  const verdict = VERDICTS.includes(source.preliminaryVerdict as (typeof VERDICTS)[number])
+    ? (source.preliminaryVerdict as (typeof VERDICTS)[number])
+    : "unverified";
+  const confidence = ["low", "medium", "high"].includes(source.confidence as string)
+    ? (source.confidence as "low" | "medium" | "high")
+    : "low";
+  const notes = Array.isArray(source.evidenceNotes)
+    ? source.evidenceNotes
+        .map((note) => {
+          const entry = (note ?? {}) as Record<string, unknown>;
+          const stance = STANCES.includes(entry.stance as (typeof STANCES)[number])
+            ? (entry.stance as (typeof STANCES)[number])
+            : "context";
+          return { url: String(entry.url ?? ""), stance, noteEn: String(entry.noteEn ?? "") };
+        })
+        .filter((note) => note.url && note.noteEn)
+    : [];
+  const repaired = aiSynthesisSchema.safeParse({
+    supportingSummaryEn: String(source.supportingSummaryEn ?? ""),
+    contradictingSummaryEn: String(source.contradictingSummaryEn ?? ""),
+    missingContextEn: String(source.missingContextEn ?? ""),
+    preliminaryVerdict: verdict,
+    confidence,
+    evidenceNotes: notes,
+  });
+  return repaired.success ? repaired.data : null;
+}
 
 const aiSynthesisSchema = z.object({
   supportingSummaryEn: z.string().default(""),
@@ -427,97 +470,244 @@ export async function runResearch(input: ResearchInput): Promise<ResearchResult>
   report.searchMode = searchMode;
 
   if (isAiConfigured() && evidence.length > 0) {
-    let synthesis: Awaited<ReturnType<typeof aiComplete>> = null;
+    /**
+     * Free tiers meter tokens per minute (Groq allows 8k), and a 26-item dump
+     * blows through that. The analysts get the strongest dozen items with tight
+     * snippets — enough to judge, small enough to answer.
+     */
+    const promptEvidence = evidence
+      .slice()
+      .sort((a, b) => {
+        const rank = (item: Evidence) =>
+          item.sourceType === "primary_record" ? 0 : item.sourceType === "government" ? 1 : item.sourceType === "independent_journalism" ? 2 : 3;
+        return rank(a) - rank(b);
+      })
+      .slice(0, 12);
+    const evidenceBlock = `CLAIM:\n${input.claimText}\n\nEXTRACTED CLAIMS:\n${claims
+      .map((c, i) => `${i + 1}. ${c.text}`)
+      .join("\n")}\n\nINDEPENDENT PUBLISHERS (${independent.length}): ${independent.join(", ") || "none"}\nPRIMARY RECORDS: ${primaryCount}\n\nRETRIEVED EVIDENCE (${promptEvidence.length} of ${evidence.length} items):\n${promptEvidence
+      .map(
+        (e, i) =>
+          `[${i + 1}] ${e.title.slice(0, 180)}\nURL: ${e.url}\nType: ${e.sourceType}\nSnippet: ${(e.quote ?? "").slice(0, 320)}`,
+      )
+      .join("\n\n")}`;
+
+    const RULES = [
+      "You are assisting a human fact-checking editor in India. You are given numbered search results only — you may not use any other knowledge and may not invent sources.",
+      "Assess what the retrieved evidence supports, what it contradicts, and what context is missing.",
+      "Recommend a preliminary verdict from: verified_true, false, misleading, unverified, outdated, disputed.",
+      "If evidence is thin, indirect, or does not address the specific claim, choose unverified with low confidence.",
+      "Corroboration rule: a verdict of verified_true or false requires at least three INDEPENDENT publishers agreeing, or one primary government/court record. If the evidence set has fewer, you must return unverified or disputed and say why.",
+      "Treat syndicated copies of one wire story as a single source, not several.",
+    ];
+    const SCHEMA =
+      'Return strict JSON: {"supportingSummaryEn":"","contradictingSummaryEn":"","missingContextEn":"","preliminaryVerdict":"unverified","confidence":"low","evidenceNotes":[{"url":"","stance":"supports|contradicts|context","noteEn":""}]}';
+    const BREVITY =
+      "Write in plain English for an editor. No verdict is final; a human decides. Keep each summary at most 60 words, at most 8 evidenceNotes of at most 20 words. Output must be one complete JSON object.";
+
+    // ------------------------------------------------ 1. independent analysts
+    // Each model judges the SAME evidence set on its own and never sees the
+    // others' answers, so agreement between them is worth something.
+    const analystSystem = [
+      ...RULES,
+      "You are one of several independent analysts. Judge this evidence yourself; you will not see the other analysts' answers.",
+      SCHEMA,
+      BREVITY,
+    ].join(" ");
+
+    let fanout: Awaited<ReturnType<typeof aiFanout>> = [];
     try {
-      synthesis = await aiComplete(
+      fanout = await aiFanout(
         [
-        {
-          role: "system",
-          content: [
-            "You are assisting a human fact-checking editor in India. You are given numbered search results only — you may not use any other knowledge and may not invent sources.",
-            "Assess what the retrieved evidence supports, what it contradicts, and what context is missing.",
-            "Recommend a preliminary verdict from: verified_true, false, misleading, unverified, outdated, disputed.",
-            "If evidence is thin, indirect, or does not address the specific claim, choose unverified with low confidence.",
-            "Corroboration rule: a verdict of verified_true or false requires at least three INDEPENDENT publishers agreeing, or one primary government/court record. If the evidence set has fewer, you must return unverified or disputed and say why.",
-            "Treat syndicated copies of one wire story as a single source, not several.",
-            "Return strict JSON: {\"supportingSummaryEn\":\"\",\"contradictingSummaryEn\":\"\",\"missingContextEn\":\"\",\"preliminaryVerdict\":\"unverified\",\"confidence\":\"low\",\"evidenceNotes\":[{\"url\":\"\",\"stance\":\"supports|contradicts|context\",\"noteEn\":\"\"}]}",
-            "Write in plain English for an editor. No verdict is final; a human decides.",
-            "Keep it short: each summary at most 60 words, missingContext at most 60 words, at most 8 evidenceNotes, each note at most 20 words. Output must be one complete JSON object.",
-          ].join(" "),
-        },
-        {
-          role: "user",
-          content: `CLAIM:\n${input.claimText}\n\nEXTRACTED CLAIMS:\n${claims.map((c, i) => `${i + 1}. ${c.text}`).join("\n")}\n\nINDEPENDENT PUBLISHERS (${independent.length}): ${independent.join(", ") || "none"}\nPRIMARY RECORDS: ${primaryCount}\n\nRETRIEVED EVIDENCE:\n${evidence
-            .map((e, i) => `[${i + 1}] ${e.title}\nURL: ${e.url}\nType: ${e.sourceType}\nSnippet: ${e.quote}`)
-            .join("\n\n")}`,
-        },
-      ],
-        {
-          json: true,
-          temperature: 0.1,
-          maxTokens: 2600,
-          // The verdict is the point of the run, so this call waits much longer.
-          timeoutMs: 120_000,
-        },
+          { role: "system", content: analystSystem },
+          { role: "user", content: evidenceBlock },
+        ],
+        { json: true, temperature: 0.1, maxTokens: 1600, timeoutMs: 90_000 },
       );
     } catch (error) {
       aiNotice = (error as Error).message;
-      console.error("[research] synthesis failed:", aiNotice);
+      console.error("[research] analyst pass failed:", aiNotice);
     }
 
-    if (synthesis) {
+    const assessments: AnalystAssessment[] = [];
+    for (const result of fanout) {
+      if (!result.answer) {
+        console.warn(`[research] analyst ${result.provider} unavailable: ${result.error}`);
+        continue;
+      }
       try {
-        const parsed = aiSynthesisSchema.parse(parseJsonLoose(synthesis.text));
-        report = {
-          ...report,
-          model: `${synthesis.model} · ${synthesis.provider}`,
+        const parsed = parseAssessment(result.answer.text);
+        if (!parsed) throw new Error("output did not match the assessment shape");
+        assessments.push({
+          provider: result.provider,
+          model: result.answer.model,
+          preliminaryVerdict: parsed.preliminaryVerdict as Verdict,
+          confidence: parsed.confidence,
           supportingSummaryEn: parsed.supportingSummaryEn,
           contradictingSummaryEn: parsed.contradictingSummaryEn,
           missingContextEn: parsed.missingContextEn,
-          preliminaryVerdict: parsed.preliminaryVerdict as Verdict,
-          confidence: parsed.confidence,
-        };
-        for (const note of parsed.evidenceNotes) {
-          const match = evidence.find((e) => e.url === note.url);
-          if (match) {
-            match.stance = note.stance;
-            match.noteEn = note.noteEn;
-          }
-        }
-        const strong = parsed.preliminaryVerdict === "verified_true" || parsed.preliminaryVerdict === "false";
-        if (strong && !corroborated) {
-          report.preliminaryVerdict = "unverified";
-          report.confidence = "low";
-          report.missingContextEn = [
-            report.missingContextEn,
-            `Corroboration floor not met: ${independent.length} independent publisher(s) (${MIN_INDEPENDENT} required, or one primary record). The model suggested ${parsed.preliminaryVerdict}; it has been downgraded to UNVERIFIED.`,
-          ]
-            .filter(Boolean)
-            .join("\n\n");
-          setStep("corroborate", "unavailable", "Model's verdict downgraded — evidence set is not independent enough to support it.");
-        }
-        setStep("compare", "done", "Supporting and contradicting evidence compared by model; editor must verify each item.");
-        setStep("context", "done");
-        setStep("draft", "done", `Preliminary recommendation: ${parsed.preliminaryVerdict} (${parsed.confidence} confidence).`);
-      } catch (parseError) {
+          agreesWithFinal: true,
+        });
+      } catch (error) {
         console.error(
-          "[research] synthesis output rejected:",
-          (parseError as Error).message.slice(0, 300),
+          `[research] analyst ${result.provider} output rejected:`,
+          (error as Error).message.slice(0, 200),
           "| raw:",
-          (synthesis.text ?? "").slice(0, 400),
+          result.answer.text.slice(0, 300),
         );
-        setStep("compare", "unavailable", "Model output failed schema validation; no preliminary verdict generated.");
-        setStep("context", "unavailable");
-        setStep("draft", "done", "Evidence attached for manual review. No automatic recommendation.");
       }
-    } else {
-      setStep(
-        "compare",
-        "unavailable",
-        `AI synthesis unavailable (${aiNotice ?? "no response"}). Evidence attached for manual review.`,
-      );
+    }
+
+    if (assessments.length === 0) {
+      const why =
+        fanout.map((result) => `${result.provider}: ${result.error ?? "unusable output"}`).join("; ") ||
+        aiNotice ||
+        "no provider answered";
+      setStep("compare", "unavailable", `No model produced a usable assessment (${why}). Evidence attached for manual review.`);
       setStep("context", "unavailable");
       setStep("draft", "done", "Evidence attached for manual review. No automatic recommendation.");
+    } else {
+      const tally = new Map<string, number>();
+      for (const assessment of assessments) {
+        tally.set(assessment.preliminaryVerdict, (tally.get(assessment.preliminaryVerdict) ?? 0) + 1);
+      }
+      const unanimous = tally.size === 1;
+      const spread = Array.from(tally.entries())
+        .map(([verdict, count]) => `${verdict} ×${count}`)
+        .join(", ");
+
+      setStep(
+        "compare",
+        "done",
+        `${assessments.length} independent model(s) read the same ${promptEvidence.length} item(s) from ${independent.length} publisher(s): ${assessments
+          .map((assessment) => `${assessment.provider} → ${assessment.preliminaryVerdict}`)
+          .join(", ")}.`,
+      );
+
+      // ------------------------------------------------ 2. one re-check
+      // The re-check goes to the best provider first and fails over from there,
+      // so the re-checker is never the analyst that just spoke (when avoidable).
+      const adjudicator =
+        config.ai.adjudicator ||
+        config.ai.chain.find((endpoint) => endpoint.name !== assessments[0].provider)?.name ||
+        config.ai.chain[0]?.name ||
+        "";
+
+      let finalVerdict = assessments[0].preliminaryVerdict;
+      let finalConfidence: ResearchReport["confidence"] = assessments[0].confidence;
+      let supporting = assessments[0].supportingSummaryEn;
+      let contradicting = assessments[0].contradictingSummaryEn;
+      let missing = assessments[0].missingContextEn;
+      let notes: { url: string; stance: "supports" | "contradicts" | "context"; noteEn: string }[] = [];
+      let modelLabel = `${assessments[0].model} · ${assessments[0].provider}`;
+      let reCheck = "not run — only one analyst answered";
+
+      if (assessments.length >= 2) {
+        const adjudicatorSystem = [
+          ...RULES,
+          "You are the re-checking analyst. Two or more independent models have assessed the SAME evidence set; their answers are below.",
+          "Re-verify their work against the evidence itself: confirm what is right, correct what is wrong, and overturn what the evidence does not support.",
+          "If the analysts disagree, say so plainly in missingContextEn and choose the verdict the evidence actually supports — often unverified or disputed.",
+          "Do not average opinions and do not invent sources.",
+          SCHEMA.replace("You are given", "You are given"),
+          BREVITY,
+        ].join(" ");
+        const analystBlock = assessments
+          .map(
+            (assessment, index) =>
+              `ANALYST ${String.fromCharCode(65 + index)} — ${assessment.provider} (${assessment.model}): ${assessment.preliminaryVerdict} / ${assessment.confidence} confidence\n  Supports: ${assessment.supportingSummaryEn}\n  Contradicts: ${assessment.contradictingSummaryEn}\n  Missing: ${assessment.missingContextEn}`,
+          )
+          .join("\n\n");
+
+        try {
+          const recheck = await aiComplete(
+            [
+              { role: "system", content: adjudicatorSystem },
+              { role: "user", content: `${evidenceBlock}\n\nINDEPENDENT ANALYST ANSWERS (${assessments.length}):\n${analystBlock}` },
+            ],
+            {
+              json: true,
+              temperature: 0,
+              maxTokens: 1800,
+              timeoutMs: 120_000,
+              prefer: adjudicator,
+            },
+          );
+          if (recheck) {
+            const parsed = parseAssessment(recheck.text);
+            if (!parsed) throw new Error("re-check output did not match the assessment shape");
+            finalVerdict = parsed.preliminaryVerdict as Verdict;
+            finalConfidence = parsed.confidence;
+            supporting = parsed.supportingSummaryEn;
+            contradicting = parsed.contradictingSummaryEn;
+            missing = parsed.missingContextEn;
+            notes = parsed.evidenceNotes;
+            modelLabel = `${recheck.model} · ${recheck.provider}`;
+            reCheck = `${recheck.provider} (${recheck.model}) confirmed after reading ${assessments.length} analyst reports`;
+          }
+        } catch (error) {
+          aiNotice = (error as Error).message;
+          console.error("[research] re-check failed:", aiNotice);
+          // Fall back to the analysts' own tally rather than their first opinion:
+          // a split is itself a finding, and it can never be stronger than unverified.
+          const winning = Array.from(tally.entries()).sort((a, b) => b[1] - a[1])[0];
+          finalVerdict = (unanimous ? winning[0] : "unverified") as Verdict;
+          finalConfidence = unanimous ? assessments[0].confidence : "low";
+          if (!unanimous) {
+            missing = [missing, `Analysts disagreed (${spread}); treated as UNVERIFIED pending editorial review.`]
+              .filter(Boolean)
+              .join("\n\n");
+          }
+          reCheck = `re-check unavailable (${aiNotice}); ${unanimous ? "analysts were unanimous" : `analysts split ${spread}`}`;
+        }
+      }
+
+      report = {
+        ...report,
+        model: modelLabel,
+        supportingSummaryEn: supporting,
+        contradictingSummaryEn: contradicting,
+        missingContextEn: missing,
+        preliminaryVerdict: finalVerdict,
+        confidence: finalConfidence,
+        analysts: assessments.map((assessment) => ({
+          ...assessment,
+          agreesWithFinal: assessment.preliminaryVerdict === finalVerdict,
+        })),
+        adjudicator: reCheck,
+      };
+
+      for (const note of notes) {
+        const match = evidence.find((e) => e.url === note.url);
+        if (match) {
+          match.stance = note.stance;
+          match.noteEn = note.noteEn;
+        }
+      }
+
+      const strong = finalVerdict === "verified_true" || finalVerdict === "false";
+      if (strong && !corroborated) {
+        report.preliminaryVerdict = "unverified";
+        report.confidence = "low";
+        report.missingContextEn = [
+          report.missingContextEn,
+          `Corroboration floor not met: ${independent.length} independent publisher(s) (${MIN_INDEPENDENT} required, or one primary record). The models suggested ${finalVerdict}; it has been downgraded to UNVERIFIED.`,
+        ]
+          .filter(Boolean)
+          .join("\n\n");
+        setStep("corroborate", "unavailable", "Model verdict downgraded — the evidence set is not independent enough to support it.");
+      }
+
+      setStep(
+        "context",
+        "done",
+        `${reCheck}${unanimous ? `; analysts unanimous (${spread})` : `; analysts split (${spread})`}.`,
+      );
+      setStep(
+        "draft",
+        "done",
+        `Preliminary recommendation: ${report.preliminaryVerdict} (${report.confidence} confidence), from ${assessments.length} independent model(s) plus a re-check.`,
+      );
     }
   } else if (evidence.length > 0 && aiNotice) {
     report.missingContextEn = [
@@ -560,6 +750,8 @@ export function researchCapabilities() {
     provider: isAiConfigured() ? config.ai.provider : null,
     /** Every provider the desk will try, in order — keyless last. */
     providers: config.ai.chain.map((endpoint) => endpoint.label),
+    /** The cross-check bench: each entry answers independently. */
+    analysts: config.ai.analystEndpoints.map((endpoint) => endpoint.label),
     /** What the desk would need to add for full AI synthesis. */
     needs: isAiConfigured()
       ? []
