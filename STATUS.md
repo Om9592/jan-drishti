@@ -18,6 +18,36 @@ step between the question and the answer; nothing is created in the fact-check a
 | Answer card renders | Playwright, 1280 px | ✅ verdict, confidence, three evidence columns, source list, cross-check line, machine-output disclaimer, **0 page errors** |
 | Type check / build | `npx tsc --noEmit`, `npm run build` | ✅ clean; routes `/api/fact-check/ask`, `/admin/ai-checks` present |
 
+### Verified in production (`jan-drishti-navy.vercel.app`, commit `01a8c10`)
+
+| Check | Result |
+| --- | --- |
+| Public ask, no account | 200 in **19.6 s**; 16 evidence items, **16 publishers**; sources shown: India Today, The New Indian Express, The Times of India, Scroll.in, The Indian Express, Al Jazeera |
+| Three models per claim | `gemini-3.5-flash`, `groq/openai/gpt-oss-120b`, `groq/openai/gpt-oss-20b` — all `unverified`; re-check `groq (gpt-oss-20b) confirmed after reading 3 analyst reports` |
+| Desk record written | ✅ `recorded: true`, read back from Firestore before the answer is returned |
+| Machine answer is not an archive verdict | ✅ claim text absent from `/fact-check` |
+| Desk log closed to strangers | ✅ `/admin/ai-checks` says "You do not have editorial access"; the report is not in the RSC payload and the claim never appears |
+
+### Two bugs the live run caught
+
+1. **The desk record was not being written.** A Firestore document may not contain an
+   `undefined` value and sources carry optional fields, so every write threw while the
+   reader still got an answer. The record is now written in JSON form, with a minimal
+   fallback, and the answer carries `recorded` — read back, not assumed. The card tells
+   the reader if the desk could not be notified.
+2. **A desk page rendered for strangers.** `/admin/ai-checks` showed the access-denied
+   panel, but the layout and the page render in parallel, so the page body still ran and
+   was serialised into the stream. Both desk pages now check the role before touching
+   the database.
+
+### Known limitation, stated plainly
+
+Three live claims in a row came back `unverified`. That is the honesty rule working —
+none of the retrieved reports actually addressed the specific numbers or announcements —
+but it also shows the bottleneck is **retrieval, not the models**: a viral claim gets a
+decisive verdict only when the search finds a report that speaks to it directly. Next
+step would be claim-aware query variants and per-claim source targeting.
+
 ### How it is wired
 
 - `app/api/fact-check/ask/route.ts` — public POST. Rate limited per visitor
