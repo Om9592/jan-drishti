@@ -645,33 +645,71 @@ export async function runResearch(input: ResearchInput): Promise<ResearchResult>
           .join("\n\n");
 
         try {
-          const recheck = await aiComplete(
-            [
-              { role: "system", content: adjudicatorSystem },
-              {
-                role: "user",
-                content: `${evidenceBlock}\n\nINDEPENDENT ANALYST ANSWERS (${assessments.length}):\n${analystBlock}`,
-              },
-            ],
+          /**
+           * Two shapes for the re-check: JSON mode first, then a plain answer
+           * that only has to contain JSON somewhere. Small models drop out of
+           * JSON mode when the completion budget runs short.
+           */
+          const recheckAttempts: { json: boolean; messages: { role: "system" | "user"; content: string }[]; maxTokens: number }[] = [
             {
               json: true,
-              temperature: 0,
               maxTokens: 2000,
-              timeoutMs: 120_000,
-              prefer: adjudicator || undefined,
-              preferModel: config.ai.adjudicatorModel || undefined,
-              onTokenLimit: [
+              messages: [
                 { role: "system", content: adjudicatorSystem },
                 {
                   role: "user",
+                  content: `${evidenceBlock}\n\nINDEPENDENT ANALYST ANSWERS (${assessments.length}):\n${analystBlock}`,
+                },
+              ],
+            },
+            {
+              json: false,
+              maxTokens: 2000,
+              messages: [
+                {
+                  role: "system",
+                  content: `${adjudicatorSystem} Reply with the JSON object only — no commentary before or after it.`,
+                },
+                {
+                  role: "user",
                   content: `${compactBlock}\n\nANALYST ANSWERS (brief):\n${assessments
-                    .map((assessment) => `${assessment.provider}: ${assessment.preliminaryVerdict} — ${assessment.missingContextEn.slice(0, 120)}`)
+                    .map((assessment) => `${assessment.provider} (${assessment.model}): ${assessment.preliminaryVerdict} — ${assessment.missingContextEn.slice(0, 140)}`)
                     .join("\n")}`,
                 },
               ],
-              onTokenLimitMaxTokens: 1000,
             },
-          );
+          ];
+
+          let recheck: Awaited<ReturnType<typeof aiComplete>> = null;
+          for (const attemptOptions of recheckAttempts) {
+            try {
+              recheck = await aiComplete(attemptOptions.messages, {
+                json: attemptOptions.json,
+                temperature: 0,
+                maxTokens: attemptOptions.maxTokens,
+                timeoutMs: 120_000,
+                prefer: adjudicator || undefined,
+                preferModel: config.ai.adjudicatorModel || undefined,
+                onTokenLimit: [
+                  { role: "system", content: adjudicatorSystem },
+                  {
+                    role: "user",
+                    content: `${compactBlock}\n\nANALYST ANSWERS (brief):\n${assessments
+                      .map((assessment) => `${assessment.provider}: ${assessment.preliminaryVerdict} — ${assessment.missingContextEn.slice(0, 120)}`)
+                      .join("\n")}`,
+                  },
+                ],
+                onTokenLimitMaxTokens: 1000,
+              });
+            } catch (error) {
+              aiNotice = (error as Error).message;
+              console.error("[research] re-check call failed:", aiNotice);
+              continue;
+            }
+            if (recheck && parseAssessment(recheck.text)) break;
+            console.warn("[research] re-check output unusable, retrying in prose | raw:", (recheck?.text ?? "").slice(0, 240));
+            recheck = null;
+          }
           if (recheck) {
             const parsed = parseAssessment(recheck.text);
             if (!parsed) throw new Error("re-check output did not match the assessment shape");

@@ -42,6 +42,33 @@ export function isGovernmentSource(url: string): boolean {
   return ["government", "primary_record"].includes(classifySource(url));
 }
 
+/**
+ * Providers that just told us to go away are skipped for a while instead of
+ * costing 45 s of waiting on every call. Process-local, which is the right scope
+ * for "this key is out of quota right now".
+ */
+const cooldowns = new Map<string, number>();
+
+function coolingDown(name: string): boolean {
+  const until = cooldowns.get(name);
+  if (!until) return false;
+  if (Date.now() < until) return true;
+  cooldowns.delete(name);
+  return false;
+}
+
+function cooldownFor(error: AiError): number {
+  if (error.status === 401 || error.status === 403) return 30 * 60_000;
+  if (/daily quota/i.test(error.message)) return 20 * 60_000;
+  if (error.retryAfterMs) return error.retryAfterMs;
+  return 0;
+}
+
+function noteFailure(name: string, error: AiError) {
+  const ms = cooldownFor(error);
+  if (ms > 0) cooldowns.set(name, Date.now() + ms);
+}
+
 interface AiOptions {
   temperature?: number;
   json?: boolean;
@@ -110,6 +137,10 @@ export async function aiComplete(messages: AiMessage[], options?: AiOptions): Pr
 
   for (let index = 0; index < chain.length; index += 1) {
     const endpoint = chain[index];
+    if (coolingDown(endpoint.name)) {
+      failures.push(`${endpoint.label}: skipped, cooling down after a recent refusal`);
+      continue;
+    }
     const remaining = deadline - Date.now();
     if (remaining < 5_000) {
       failures.push(`${endpoint.label}: skipped, no time left`);
@@ -132,6 +163,7 @@ export async function aiComplete(messages: AiMessage[], options?: AiOptions): Pr
     } catch (error) {
       const failure = error as AiError;
       failures.push(`${endpoint.label}: ${failure.message}`);
+      noteFailure(endpoint.name, failure);
       // A keyless endpoint that is merely waiting its turn is worth waiting for.
       if (failure.retryAfterMs && failure.retryAfterMs <= 45_000) {
         const left = deadline - Date.now() - failure.retryAfterMs;
@@ -463,10 +495,14 @@ export async function aiFanout(
   const timeoutMs = options?.timeoutMs ?? 60_000;
 
   const ask = async (endpoint: (typeof order)[number]): Promise<FanoutResult> => {
+    if (coolingDown(endpoint.name)) {
+      return { provider: endpoint.name, label: endpoint.label, answer: null, error: "cooling down after a recent refusal" };
+    }
     try {
       const answer = await attempt(endpoint, messages, { ...options, retryOnTruncation: false }, timeoutMs);
       return { provider: endpoint.name, label: endpoint.label, answer };
     } catch (error) {
+      if (error instanceof AiError) noteFailure(endpoint.name, error);
       return { provider: endpoint.name, label: endpoint.label, answer: null, error: (error as Error).message };
     }
   };
