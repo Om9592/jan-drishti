@@ -261,6 +261,49 @@ export async function runChatTurn(input: {
   const analysts = report.analysts ?? [];
   const reCheck = report.adjudicator ?? "no re-check recorded";
 
+  // Nothing retrieved is a failure to check, not a finding. Saying "no source
+  // confirms this" here would be a lie dressed as a verdict.
+  if (evidence.length === 0) {
+    const lang = replyLanguageOf(question);
+    const reply =
+      lang === "hi"
+        ? "अभी जाँच पूरी नहीं हो सकी — इस शब्दावली पर किसी भी स्रोत से कुछ नहीं मिला। यह \"कुछ साबित नहीं हुआ\" नहीं है, बल्कि यह है कि खोज नहीं चल पाई। एक मिनट बाद दोबारा कोशिश करें या जगह, तारीख़ और आंकड़ा लिखकर भेजें।"
+        : lang === "hinglish"
+          ? "Abhi jaanch poori nahi ho saki — is wording par kisi source se kuch nahi mila. Yeh \"kuch sabit nahi hua\" nahi hai, balki yeh hai ki search nahi chal payi. Ek minute baad dobara koshish karein, ya jagah, tareekh aur aankda likh kar bhejein."
+          : "The check could not be run just now: the search returned nothing usable for this wording. That is a failure to check, not a finding. Try again in a minute, or name the place, the date and the figure.";
+    const result: ChatTurnResult = {
+      id: `chat-${randomUUID()}`,
+      reply,
+      question,
+      verdict: "unverified",
+      confidence: "low",
+      sources: [],
+      analysts: [],
+      reCheck: "not run — nothing was retrieved to re-check",
+      flags: ["no-evidence", "search-failed"],
+      publishers: 0,
+      evidenceChecked: 0,
+      durationMs: Date.now() - startedAt,
+      model: null,
+      recorded: false,
+      machine: true,
+      createdAt: new Date().toISOString(),
+      queries: report.queries ?? [],
+      retrieverSummary: "no retriever returned a usable result",
+    };
+    const db = adminDb();
+    if (db) {
+      try {
+        const ref = db.collection(COLLECTIONS.publicChecks).doc(result.id);
+        await ref.set(JSON.parse(JSON.stringify({ ...result, claim: question, kind: "chat", threadId: input.threadId, ipHash: input.ipHash })));
+        result.recorded = (await ref.get()).exists;
+      } catch (error) {
+        console.error("[chat] the desk did not receive this turn", error);
+      }
+    }
+    return result;
+  }
+
   input.onStatus({ key: "writing", label: input.language === "hi" ? "जवाब लिखा जा रहा है" : "Writing the answer" });
 
   const streamed = await aiStream(
