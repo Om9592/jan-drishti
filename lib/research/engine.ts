@@ -751,7 +751,12 @@ export async function runResearch(input: ResearchInput): Promise<ResearchResult>
             return Number.isFinite(age) && age <= 7;
           }).length}.`
         : `TODAY: ${new Date().toISOString().slice(0, 10)}. No publication dates were available.`;
-    const evidenceBlock = `${freshness}\n\n${renderClaimBlock(promptEvidence, 300)}`;
+    /** Counting publishers is the engine's job, not the model's. */
+    const corroboration =
+      independent.length >= 3
+        ? `CORROBORATION: ${independent.length} independent publishers are represented below, and the corroboration bar of three is therefore met if at least three of them report the same fact. They will use different wording and different angles — a political reaction, a data report, a wire copy — and that still counts as agreement about the underlying fact. Do not return unverified on the ground that corroboration is absent while this line says it is met.`
+        : `CORROBORATION: only ${independent.length} independent publisher(s) below, so the three-publisher bar is not met; say so if you withhold a verdict.`;
+    const evidenceBlock = `${freshness}\n${corroboration}\n\n${renderClaimBlock(promptEvidence, 300)}`;
     const compactBlock = renderClaimBlock(ranked.slice(0, 6), 180);
 
     const RULES = [
@@ -761,7 +766,7 @@ export async function runResearch(input: ResearchInput): Promise<ResearchResult>
       "If evidence is thin, indirect, or does not address the specific claim, choose unverified with low confidence.",
       "Decide from what is in front of you. When several independent publishers report the same event, in the same terms as the claim, that is verified_true — do not withhold a verdict just because you cannot open the articles themselves.",
       "Only choose unverified when the retrieved reports genuinely do not speak to the claim, not because the wording differs slightly.",
-      "Corroboration rule: a verdict of verified_true or false requires at least three INDEPENDENT publishers agreeing, or one primary government/court record. If the evidence set has fewer, you must return unverified or disputed and say why.",
+      "Corroboration rule: a verdict of verified_true or false requires at least three INDEPENDENT publishers agreeing, or one primary government/court record. The CORROBORATION line tells you whether that bar is met — trust it over your own count of the numbered items.",
       "If the documented event is real but the claim overstates it — a stretch of river described as the whole river, a local report described as a national order — return misleading and say exactly what is exaggerated, rather than unverified.",
       "Treat syndicated copies of one wire story as a single source, not several.",
     ];
