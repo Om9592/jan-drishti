@@ -76,7 +76,11 @@ async function fetchText(url: string, timeoutMs = 12_000): Promise<string | null
 }
 
 async function googleNewsFeed(query: string): Promise<SearchHit[]> {
-  const url = `https://news.google.com/rss/search?q=${encodeURIComponent(query)}&hl=en-IN&gl=IN&ceid=IN:en`;
+  // A Hindi claim has to be searched in the Hindi edition, or the reader's own
+  // words match nothing: Google returns English headlines only.
+  const hindi = /[\u0900-\u097F]/.test(query);
+  const locale = hindi ? "hl=hi-IN&gl=IN&ceid=IN:hi" : "hl=en-IN&gl=IN&ceid=IN:en";
+  const url = `https://news.google.com/rss/search?q=${encodeURIComponent(query)}&${locale}`;
   const xml = await fetchText(url);
   if (!xml) return [];
   const blocks = xml.match(/<item[\s\S]*?<\/item>/gi) ?? [];

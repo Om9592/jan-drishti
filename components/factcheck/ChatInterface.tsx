@@ -74,6 +74,16 @@ function timeAgoShort(iso: string | null | undefined, hi: boolean): string {
   return hi ? `${months} महीने पहले` : `${months}mo ago`;
 }
 
+/**
+ * True when the reply summarises retrieved sources rather than judging them —
+ * every model was unavailable, or the search failed. Neither should show a
+ * verdict word to the reader.
+ */
+function noModelJudged(flags: string[] | undefined): boolean {
+  if (!flags || flags.length === 0) return false;
+  return flags.includes("assembled-reply") || flags.includes("no-evidence") || flags.includes("search-failed");
+}
+
 function newThreadId(): string {
   return `t-${Math.random().toString(36).slice(2, 10)}${Date.now().toString(36).slice(-4)}`;
 }
@@ -325,16 +335,27 @@ export function ChatInterface() {
               <div key={message.id} className="border-l-2 border-gold/60 pl-3">
                 {message.result && (
                   <div className="mb-1.5 flex flex-wrap items-center gap-2">
-                    <span
-                      className={`border px-1.5 py-0.5 font-sans text-[0.56rem] uppercase tracking-[0.12em] ${
-                        VERDICT_META[message.result.verdict]?.tone ?? ""
-                      }`}
-                    >
-                      {hi ? VERDICT_META[message.result.verdict]?.hi : VERDICT_META[message.result.verdict]?.en}
-                    </span>
-                    <span className="font-sans text-[0.62rem] uppercase tracking-[0.1em] text-ink-muted">
-                      {hi ? "विश्वास" : "Confidence"} {message.result.confidence}
-                    </span>
+                    {noModelJudged(message.result.flags) ? (
+                      // No model reached a conclusion. Calling that "unverified"
+                      // would read as a finding, which is the opposite of what
+                      // happened, so the chip says what it is.
+                      <span className="border border-rule bg-subtle px-1.5 py-0.5 font-sans text-[0.56rem] uppercase tracking-[0.12em] text-ink-muted">
+                        {hi ? "अभी कोई निर्णय नहीं" : "No verdict yet"}
+                      </span>
+                    ) : (
+                      <>
+                        <span
+                          className={`border px-1.5 py-0.5 font-sans text-[0.56rem] uppercase tracking-[0.12em] ${
+                            VERDICT_META[message.result.verdict]?.tone ?? ""
+                          }`}
+                        >
+                          {hi ? VERDICT_META[message.result.verdict]?.hi : VERDICT_META[message.result.verdict]?.en}
+                        </span>
+                        <span className="font-sans text-[0.62rem] uppercase tracking-[0.1em] text-ink-muted">
+                          {hi ? "विश्वास" : "Confidence"} {message.result.confidence}
+                        </span>
+                      </>
+                    )}
                   </div>
                 )}
 

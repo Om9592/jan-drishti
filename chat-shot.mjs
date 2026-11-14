@@ -12,7 +12,7 @@ await page.locator("textarea").click();
 await page.keyboard.type(q, { delay: 5 });
 await page.locator('button[aria-label="Send"]').click();
 const t0 = Date.now();
-await page.waitForFunction(() => /\d+ models ·|\d+ मॉडल|could not be completed/.test(document.body.innerText), null, { timeout: 240000 });
+await page.waitForFunction(() => /Sources · \d+|could not be completed/i.test(document.body.innerText), null, { timeout: 240000 });
 console.log(`sources block after ${((Date.now() - t0) / 1000).toFixed(1)}s`);
 await page.waitForTimeout(1200);
 await page.screenshot({ path: "/home/user/jan-drishti/shot-chat-answer.png" });
