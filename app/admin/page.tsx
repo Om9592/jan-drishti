@@ -1,19 +1,22 @@
 import Link from "next/link";
 import { ArrowUpRight, Database, Search, Sparkles, FileText, ScanText } from "lucide-react";
 import { getStore } from "@/lib/store";
+import { listPublicChecks } from "@/lib/services/public-checks";
 import { capabilities } from "@/lib/config";
 import { formatDateTime, timeAgo } from "@/lib/utils";
 import { VerdictBadge } from "@/components/ui/VerdictBadge";
 
 export default async function AdminOverviewPage() {
   const store = getStore();
-  const [stats, factChecks, submissions, audit, articles] = await Promise.all([
+  const [stats, factChecks, submissions, audit, articles, aiCheckList] = await Promise.all([
     store.getStats(),
     store.listFactChecks({ status: "all", limit: 20 }),
     store.listSubmissions("all"),
     store.listAuditLogs(8),
     store.listArticles({ status: "all", limit: 8, sort: "latest" }),
+    listPublicChecks(50),
   ]);
+  const aiChecks = aiCheckList.length;
   const caps = capabilities();
 
   const pending = factChecks.items.filter((f) => f.status !== "published" && f.status !== "rejected");
@@ -25,6 +28,7 @@ export default async function AdminOverviewPage() {
     { label: "Awaiting verdict", value: pending.length, href: "/admin/fact-checks", accent: true },
     { label: "Open submissions", value: openSubmissions.length, href: "/admin/submissions" },
     { label: "Published fact checks", value: stats.publishedFactChecks, href: "/admin/fact-checks" },
+    { label: "AI answers to the public", value: aiChecks, href: "/admin/ai-checks" },
     { label: "Corrections issued", value: stats.corrections, href: "/admin/corrections" },
   ];
 

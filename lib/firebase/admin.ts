@@ -86,4 +86,6 @@ export const COLLECTIONS = {
   translations: "translations",
   bookmarks: "bookmarks",
   newsletter: "newsletter",
+  /** Machine answers handed to the public; read-only for editors, never public. */
+  publicChecks: "publicChecks",
 } as const;

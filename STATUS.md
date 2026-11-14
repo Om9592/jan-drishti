@@ -3,6 +3,47 @@
 Written 13 November 2026. Everything below was verified in this workspace; nothing is
 asserted that was not executed. Where something could not be done, it says so plainly.
 
+## Phase E — instant self-serve answers, reporting-only desk (13 Nov 2026)
+
+A reader asks, the machine answers, and the desk gets a record. There is no approval
+step between the question and the answer; nothing is created in the fact-check archive.
+
+| Check | Method | Result |
+| --- | --- | --- |
+| Public ask works with no account | POST `/api/fact-check/ask` from a cold client | ✅ 200 in **19.4 s**, 16 evidence items, 11 publishers, answer rendered inline |
+| Multiple models on one claim | same run | ✅ `gemini-3.5-flash` + `groq/openai/gpt-oss-120b` + `groq/openai/gpt-oss-20b`, all `unverified`; re-check `groq (gpt-oss-20b) confirmed after reading 3 analyst reports` |
+| Sources are shown, not just claimed | answer payload + UI | ✅ 8 source links with real publisher names (NDTV, Times of India, Newslaundry, Deccan Herald, TNIE, ThePrint) |
+| Bad input is refused cheaply | POST with a 5-character claim | ✅ 422 with a field message, no model call |
+| Capability probe | GET `/api/fact-check/ask` | ✅ `{"ai":true,"model":"gemini-3.5-flash","providers":["gemini","groq","pollinations"],"rateLimitPerHour":6}` |
+| Answer card renders | Playwright, 1280 px | ✅ verdict, confidence, three evidence columns, source list, cross-check line, machine-output disclaimer, **0 page errors** |
+| Type check / build | `npx tsc --noEmit`, `npm run build` | ✅ clean; routes `/api/fact-check/ask`, `/admin/ai-checks` present |
+
+### How it is wired
+
+- `app/api/fact-check/ask/route.ts` — public POST. Rate limited per visitor
+  (`PUBLIC_CHECK_RATE_LIMIT`, default 6/hour), returns the answer inline,
+  `maxDuration = 300` so a 20–60 s research run completes.
+- `lib/services/public-checks.ts` — runs the same evidence-first pipeline the desk uses
+  (`runResearch`), shapes a reader-facing answer, and writes a record to the
+  `publicChecks` collection: claim, verdict, confidence, all three analysts, the
+  re-check line, publishers, duration, model, flags, hashed IP.
+- `components/factcheck/AskAiForm.tsx` — the ask box and answer card on `/fact-check`.
+  Shows staged progress while the run happens, the evidence, and every source with its
+  publisher.
+- `app/admin/ai-checks/page.tsx` — **reporting only**: every answer the public received,
+  with its evidence count, models, flags and re-check line. No publish button, because
+  the answer is already out. An editor who wants a signed verdict creates one on the
+  editorial desk instead.
+
+### Invariants kept
+
+- Machine answers are never written into `factChecks`; the archive stays human-signed.
+- The answer says `unverified` when the evidence is thin, and surfaces analyst
+  disagreement (`flags: analysts-split`, `thin-sourcing`, `no-re-check`) instead of
+  averaging it away.
+- No source is invented: every link in the answer came from the retrieval layer.
+- Submitter identity is never shown to the public; only a salted IP hash is stored.
+
 ## Phase D — freelance contributors, real images, AI multi-source fact-check (13 Nov 2026)
 
 ### Verified by execution in this session

@@ -59,6 +59,12 @@ service cloud.firestore {
     }
 
     // ------------------------------------------------------------- submissions
+    // Machine answers given to the public. Readers never read this collection
+    // from the client; the desk reads it through the server with an editor role.
+    match /publicChecks/{checkId} {
+      allow read, write: if false;
+    }
+
     match /submissions/{submissionId} {
       // Public writes go through /api/submissions (rate limited + validated).
       allow read: if isResearcher();

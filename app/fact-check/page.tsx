@@ -5,6 +5,7 @@ import { FileSearch, ShieldCheck, Lock, Users } from "lucide-react";
 import { getStore } from "@/lib/store";
 import { createTranslator, normaliseLang, LANGUAGE_COOKIE } from "@/lib/i18n";
 import { SubmissionForm } from "@/components/factcheck/SubmissionForm";
+import { AskAiForm } from "@/components/factcheck/AskAiForm";
 import { FactCheckCard } from "@/components/ui/FactCheckCard";
 import { FilterBar } from "@/components/ui/FilterBar";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -92,8 +93,8 @@ export default async function FactCheckPage({
                 <ShieldCheck className="mt-0.5 h-3.5 w-3.5 shrink-0 text-gold-dark" aria-hidden="true" />
                 <p className="font-sans text-[0.7rem] leading-relaxed text-ink-muted">
                   {lang === "hi"
-                    ? "कोई भी निर्णय बिना मानव संपादक के प्रकाशित नहीं होता।"
-                    : "No verdict is published without a named human editor."}
+                    ? "तुरंत मिलने वाला जवाब मशीन का है; पुरालेख में प्रकाशित निर्णय पर नामित संपादक के हस्ताक्षर होते हैं।"
+                    : "The instant answer is machine output. Archived verdicts carry a named editor's signature."}
                 </p>
               </div>
               <div className="flex items-start gap-2">
@@ -129,11 +130,19 @@ export default async function FactCheckPage({
           </div>
 
           <div className="lg:col-span-6">
-            <div className="border border-rule bg-white p-5 sm:p-6">
+            {/* Ask and get an answer here; the desk gets a copy either way. */}
+            <AskAiForm />
+
+            <div className="mt-6 border border-rule bg-white p-5 sm:p-6">
               <div className="flex items-center gap-2 border-b border-rule pb-3">
                 <FileSearch className="h-4 w-4 text-gold-dark" aria-hidden="true" />
                 <h2 className="font-serif text-[1.2rem] text-navy">{t("factCheck.formHeading")}</h2>
               </div>
+              <p className="pt-3 font-sans text-[0.72rem] leading-relaxed text-ink-muted">
+                {lang === "hi"
+                  ? "अगर आप चाहते हैं कि हमारा संपादक खुद जाँच कर प्रकाशित निर्णय दे, तो दावा यहाँ भेजें — यह कतार में चला जाएगा।"
+                  : "Want a named editor to verify it and publish a verdict? Send it here instead — it joins the editorial queue."}
+              </p>
               <div className="pt-4">
                 <SubmissionForm type="viral_claim" />
               </div>
@@ -142,8 +151,8 @@ export default async function FactCheckPage({
               <Users className="mt-0.5 h-3 w-3 shrink-0" aria-hidden="true" />
               {caps.ai
                 ? lang === "hi"
-                  ? "AI-सहायक शोध सक्रिय है। अंतिम निर्णय संपादक देता है।"
-                  : "AI-assisted research is active. The final verdict is the editor's, not the model's."
+                  ? "AI जाँच सक्रिय है। जवाब मशीन का है और हर जाँच का रिकॉर्ड संपादकीय डेस्क को जाता है।"
+                  : "The AI checker is active. Its answer is labelled machine output, and every check is logged for the desk."
                 : lang === "hi"
                   ? "AI शोध कॉन्फ़िगर नहीं है — शोधकर्ता मैन्युअल रूप से जाँचेंगे। कोई नक़ली निर्णय नहीं बनेगा।"
                   : "AI research is not configured — researchers will verify manually. No verdict is ever simulated."}

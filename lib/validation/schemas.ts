@@ -33,6 +33,23 @@ export const submissionSchema = z
 
 export type SubmissionPayload = z.infer<typeof submissionSchema>;
 
+/**
+ * A public "check this now" request. Deliberately short: the model gets one
+ * claim, not an essay, and every extra sentence costs retrieval precision.
+ */
+export const publicAskSchema = z
+  .object({
+    claim: z
+      .string()
+      .trim()
+      .min(15, "Write the claim in at least 15 characters.")
+      .max(800, "Keep the claim under 800 characters so the research stays sharp."),
+    language: languageSchema.default("en"),
+  })
+  .strict();
+
+export type PublicAskPayload = z.infer<typeof publicAskSchema>;
+
 export const articleSchema = z.object({
   id: z.string().optional(),
   title: z.string().trim().min(8, "Headline is too short.").max(180),

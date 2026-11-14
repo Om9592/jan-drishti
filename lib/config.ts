@@ -239,6 +239,8 @@ export const config = {
   security: {
     submissionRateLimit: Number(env("SUBMISSION_RATE_LIMIT") ?? 5),
     researchRateLimit: Number(env("RESEARCH_RATE_LIMIT") ?? 10),
+    /** Public self-serve AI checks per connection per hour. */
+    publicCheckRateLimit: Number(env("PUBLIC_CHECK_RATE_LIMIT") ?? 6),
   },
 } as const;
 
