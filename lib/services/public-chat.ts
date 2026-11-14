@@ -28,6 +28,8 @@ export interface ChatSource {
   publisher: string;
   stance: "supports" | "contradicts" | "context";
   sourceType: string;
+  /** When the publisher ran it — a reader must be able to see how fresh this is. */
+  publishedAt?: string | null;
 }
 
 export interface ChatTurnResult {
@@ -50,6 +52,9 @@ export interface ChatTurnResult {
   /** Which queries were run and which retrievers answered — for the desk. */
   queries: string[];
   retrieverSummary: string;
+  /** Freshest source in the set, and how many are from the last week. */
+  newestSourceAt?: string | null;
+  sourcesLast7Days?: number;
 }
 
 const MAX_SOURCES = 8;
@@ -169,8 +174,11 @@ function findingsPrompt(input: {
 }
 
 /**
- * If every provider refuses to stream, the reader still gets an answer built
- * from the same findings — assembled by code, and labelled as such.
+ * If every provider refuses to stream, the reader still gets something useful:
+ * a summary of what the retrieved sources actually report, with citations, and a
+ * plain statement that no model was reachable. The old text here said "no
+ * reliable source confirms this claim" — which was a verdict the machine had no
+ * right to give, and usually untrue.
  */
 function fallbackReply(input: {
   verdict: Verdict;
@@ -179,35 +187,36 @@ function fallbackReply(input: {
   contradicting: string;
   missing: string;
   sources: ChatSource[];
-  language: Language;
+  language: "en" | "hi" | "hinglish";
 }): string {
-  const cite = input.sources.length > 0 ? ` [${input.sources.slice(0, 3).map((s) => s.n).join("][")}]` : "";
-  const opening: Record<string, string> = input.language === "hi"
-    ? {
-        verified_true: "उपलब्ध प्रमाण इस दावे का समर्थन करते हैं",
-        false: "उपलब्ध प्रमाण इस दावे का खंडन करते हैं",
-        misleading: "यह दावा आधा सच है और जिस तरह फैलाया गया है वह भ्रामक है",
-        outdated: "यह दावा पहले सही था, अब पुराना हो चुका है",
-        disputed: "स्रोत आपस में सहमत नहीं हैं",
-        unverified: "इस दावे की पुष्टि कोई भरोसेमंद स्रोत नहीं करता",
-      }
-    : {
-        verified_true: "The available evidence supports this claim",
-        false: "The available evidence contradicts this claim",
-        misleading: "This claim is partly true and misleading as it is being shared",
-        outdated: "This was true once and is out of date now",
-        disputed: "The sources do not agree with each other",
-        unverified: "No reliable source confirms this claim",
-      };
-  const tail =
-    input.language === "hi"
-      ? "यह जवाब मशीन ने मिले हुए प्रमाणों से बनाया है।"
-      : "This answer was assembled from the retrieved evidence by the machine.";
+  const cite = (n: number) => `[${n}]`;
+  const headlines = input.sources.slice(0, 5).map((source) => `${source.publisher}: ${source.title} ${cite(source.n)}`);
+
+  if (input.language === "hi") {
+    return [
+      "मॉडल अभी उपलब्ध नहीं थे, इसलिए यह निर्णय नहीं है — यह वही है जो ताज़ा स्रोत कह रहे हैं:",
+      headlines.join(" "),
+      input.supporting || input.contradicting || input.missing || "",
+      "एक पक्का जवाब देने के लिए ऊपर दिए स्रोत खोलकर देखें; संपादकीय निर्णय के लिए दावा डेस्क को भेजें।",
+    ]
+      .filter(Boolean)
+      .join("\n\n");
+  }
+  if (input.language === "hinglish") {
+    return [
+      "Models abhi available nahi the, isliye yeh verdict nahi hai — yeh wahi hai jo taaza sources keh rahe hain:",
+      headlines.join(" "),
+      input.supporting || input.contradicting || input.missing || "",
+      "Pukka jawab ke liye upar diye sources khud kholein; editorial verdict ke liye claim desk ko bhejein.",
+    ]
+      .filter(Boolean)
+      .join("\n\n");
+  }
   return [
-    `${opening[input.verdict]}${cite}.`,
-    [input.supporting, input.contradicting].filter(Boolean).join(" "),
-    input.missing ? `${input.missing}` : "",
-    tail,
+    "The models were unavailable for this check, so this is not a verdict — it is what the freshest sources report:",
+    headlines.join(" "),
+    input.supporting || input.contradicting || input.missing || "",
+    "Open the sources above to judge for yourself; send the claim to the desk if you want a signed verdict.",
   ]
     .filter(Boolean)
     .join("\n\n");
@@ -256,6 +265,7 @@ export async function runChatTurn(input: {
     publisher: publisherOf(item),
     stance: item.stance,
     sourceType: item.sourceType,
+    publishedAt: item.publishedAt ?? null,
   }));
 
   const analysts = report.analysts ?? [];
@@ -351,7 +361,7 @@ export async function runChatTurn(input: {
       contradicting: report.contradictingSummaryEn ?? "",
       missing: report.missingContextEn ?? "",
       sources,
-      language: input.language,
+      language: replyLanguageOf(question),
     });
     model = null;
   }
@@ -363,6 +373,10 @@ export async function runChatTurn(input: {
   if (/re-check unavailable/i.test(reCheck)) flags.push("no-re-check");
   if (analysts.length < 2) flags.push("single-model");
   if (report.preliminaryVerdict === "unverified") flags.push("unverified");
+  if (report.newestSourceAt) {
+    const ageDays = (Date.now() - Date.parse(report.newestSourceAt)) / 86_400_000;
+    if (ageDays > 14) flags.push("stale-evidence");
+  }
   if (!streamed) flags.push("assembled-reply");
 
   const result: ChatTurnResult = {
@@ -390,6 +404,8 @@ export async function runChatTurn(input: {
     createdAt: new Date().toISOString(),
     queries: report.queries ?? [],
     retrieverSummary: `${report.searchMode ?? "none"} · ${(report.sourcesUsed ?? []).join(", ") || "no retriever answered"}`,
+    newestSourceAt: report.newestSourceAt ?? null,
+    sourcesLast7Days: report.sourcesLast7Days ?? 0,
   };
 
   const db = adminDb();

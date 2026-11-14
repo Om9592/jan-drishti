@@ -511,6 +511,12 @@ export async function runResearch(input: ResearchInput): Promise<ResearchResult>
     .map((entity) => entity.toLowerCase())
     .filter((entity) => entity.length >= 3 || /^[a-z]{2,6}$/.test(entity));
 
+  // The subject words of the claim, so "RBI" alone is not enough to make a story
+  // about Paytm's wallet licence into evidence about ₹500 notes.
+  const claimSubjects = Array.from(claimTokens).filter(
+    (token) => !claimEntities.some((entity) => entity.includes(token) || token.includes(entity)),
+  );
+
   const matchDetail = (hit: { title: string; snippet: string; url: string }) => {
     const text = `${hit.title} ${hit.snippet}`.toLowerCase();
     const matched = new Set<string>();
@@ -519,7 +525,8 @@ export async function runResearch(input: ResearchInput): Promise<ResearchResult>
     }
     const entityMatch = claimEntities.some((entity) => text.includes(entity));
     const numberMatch = Array.from(claimNumbers).some((number) => text.includes(number));
-    return { matched: [...matched], entityMatch, numberMatch };
+    const subjectMatch = claimSubjects.some((token) => text.includes(token));
+    return { matched: [...matched], entityMatch, numberMatch, subjectMatch };
   };
 
   /**
@@ -530,23 +537,56 @@ export async function runResearch(input: ResearchInput): Promise<ResearchResult>
    * words before it is treated as evidence about this claim.
    */
   const offTopic: string[] = [];
-  const relevant = hits.filter((hit) => {
+  const specificity = new Map<string, number>();
+  const keepRelevant = (candidates: SearchHit[]) => candidates.filter((hit) => {
     const type = hit.sourceType ?? classifySource(hit.url);
     if (["government", "primary_record"].includes(type)) return true;
-    const { matched, entityMatch, numberMatch } = matchDetail(hit);
-    // When the claim names a subject — RBI, Yamuna, a person — a document that
-    // never mentions it is not evidence about it, however many generic words it
-    // shares. Without a named subject, two shared content words is the bar.
+    const { matched, entityMatch, numberMatch, subjectMatch } = matchDetail(hit);
+    specificity.set(
+      hit.url,
+      (entityMatch ? 3 : 0) + (numberMatch ? 3 : 0) + Math.min(3, matched.length) + (subjectMatch ? 1 : 0),
+    );
+    /**
+     * The named organisation is the floor, not the answer. "RBI" appears in every
+     * banking story, so a page about a wallet licence would otherwise count as
+     * evidence about ₹500 notes being discontinued. The document has to mention
+     * the claim's subject or one of its figures as well.
+     */
     if (claimEntities.length > 0) {
-      // A figure alone is not a match: "500" appears in a story about a $500
-      // printer. The named subject has to be in the document.
-      if (entityMatch) return true;
+      if (entityMatch && (subjectMatch || numberMatch)) return true;
     } else if (numberMatch || matched.length >= 2) {
       return true;
     }
     offTopic.push(hit.title.slice(0, 80));
     return false;
   });
+
+  let relevant = keepRelevant(hits);
+
+  /**
+   * The recent window is right for a claim about today and wrong for a claim
+   * about last month: "RBI stopped printing ₹500 notes" has no report from this
+   * week, so a seven-day search returns only unrelated banking news. When the
+   * fresh pass cannot carry the verdict, search again without the window and
+   * apply the same subject test.
+   */
+  if (relevant.length < 4) {
+    const widened = await retrieveEvidence(querySet, 8, null);
+    if (widened.used.length > 0) sourcesUsed.add("widened-window");
+    const before = new Set(hits.map((hit) => hit.url.split("?")[0].toLowerCase()));
+    const added = widened.hits.filter((hit) => !before.has(hit.url.split("?")[0].toLowerCase()));
+    console.warn(
+      `[research] widened window added ${added.length} hit(s): ${added
+        .slice(0, 3)
+        .map((hit) => hit.title.slice(0, 40))
+        .join(" | ")}`,
+    );
+    if (added.length > 0) {
+      hits.push(...added);
+      relevant = keepRelevant(hits);
+    }
+  }
+
   // Dropping everything would be its own kind of lie; keep the top-scoring hits
   // and let the report say the match was weak.
   if (relevant.length < 4) {
@@ -558,7 +598,10 @@ export async function runResearch(input: ResearchInput): Promise<ResearchResult>
         return {
           hit,
           score: detail.matched.length + (detail.entityMatch ? 4 : 0) + (detail.numberMatch ? 4 : 0),
-          specific: claimEntities.length > 0 ? detail.entityMatch : true,
+          specific:
+            claimEntities.length > 0
+              ? detail.entityMatch && (detail.subjectMatch || detail.numberMatch)
+              : true,
         };
       })
       .filter((entry) => entry.score > 0 && entry.specific)
@@ -574,6 +617,38 @@ export async function runResearch(input: ResearchInput): Promise<ResearchResult>
     hits.length = 0;
     hits.push(...relevant);
   }
+
+  // Order matters more than filtering: the prompt only carries the strongest ten
+  // items, and the reader sees the same order. An item that names the claim's
+  // subject, its figure, and its subject words belongs at the top; a story that
+  // merely shares the organisation name belongs at the bottom.
+  hits.sort((a, b) => {
+    const diff = (specificity.get(b.url) ?? 0) - (specificity.get(a.url) ?? 0);
+    if (diff !== 0) return diff;
+    return Date.parse(b.publishedAt ?? "0") - Date.parse(a.publishedAt ?? "0");
+  });
+
+  // Freshness: a claim asked today should not be settled by a three-year-old
+  // explainer — but a claim that has been circulating for a year is settled by
+  // the fact-checks written about it, so the guillotine has to sit far enough
+  // back to keep those. Staleness is reported, not silently deleted.
+  const now = Date.now();
+  const dayMs = 86_400_000;
+  const ageDays = (hit: { publishedAt?: string | null }) =>
+    hit.publishedAt ? (now - Date.parse(hit.publishedAt)) / dayMs : Number.NaN;
+  const freshEnough = hits.filter((hit) => {
+    const type = hit.sourceType ?? classifySource(hit.url);
+    if (["government", "primary_record"].includes(type)) return true;
+    const age = ageDays(hit);
+    return Number.isNaN(age) || age <= 400;
+  });
+  if (freshEnough.length > 0 && freshEnough.length !== hits.length) {
+    console.warn(`[research] dropped ${hits.length - freshEnough.length} item(s) older than 400 days`);
+    hits.length = 0;
+    hits.push(...freshEnough);
+  }
+  const ages = hits.map(ageDays).filter((age) => Number.isFinite(age));
+  const newestAge = ages.length > 0 ? Math.min(...ages) : Number.NaN;
 
   const publishers = independentPublishers(hits);
   setStep(
@@ -622,6 +697,15 @@ export async function runResearch(input: ResearchInput): Promise<ResearchResult>
   report.sourcesUsed = Array.from(sourcesUsed);
   report.independentSources = independent.length;
   report.searchMode = searchMode;
+  report.newestSourceAt =
+    hits
+      .map((hit) => hit.publishedAt)
+      .filter((value): value is string => Boolean(value))
+      .sort((a, b) => Date.parse(b) - Date.parse(a))[0] ?? null;
+  report.sourcesLast7Days = hits.filter((hit) => {
+    const age = ageDays(hit);
+    return Number.isFinite(age) && age <= 7;
+  }).length;
 
   if (isAiConfigured() && evidence.length > 0) {
     /**
@@ -658,7 +742,16 @@ export async function runResearch(input: ResearchInput): Promise<ResearchResult>
         .map((c, i) => `${i + 1}. ${c.text}`)
         .join("\n")}\n\nINDEPENDENT PUBLISHERS (${independent.length}): ${independent.join(", ") || "none"}\nPRIMARY RECORDS: ${primaryCount}\n\nRETRIEVED EVIDENCE (${items.length} of ${evidence.length} items):\n${renderEvidence(items, snippetChars)}`;
 
-    const evidenceBlock = renderClaimBlock(promptEvidence, 300);
+    const freshness =
+      Number.isFinite(newestAge)
+        ? `TODAY: ${new Date().toISOString().slice(0, 10)}. NEWEST SOURCE: ${
+            newestAge < 1 ? "within the last day" : `${Math.round(newestAge)} day(s) ago`
+          }. ITEMS FROM THE LAST 7 DAYS: ${hits.filter((hit) => {
+            const age = ageDays(hit);
+            return Number.isFinite(age) && age <= 7;
+          }).length}.`
+        : `TODAY: ${new Date().toISOString().slice(0, 10)}. No publication dates were available.`;
+    const evidenceBlock = `${freshness}\n\n${renderClaimBlock(promptEvidence, 300)}`;
     const compactBlock = renderClaimBlock(ranked.slice(0, 6), 180);
 
     const RULES = [
@@ -666,6 +759,8 @@ export async function runResearch(input: ResearchInput): Promise<ResearchResult>
       "Assess what the retrieved evidence supports, what it contradicts, and what context is missing.",
       "Recommend a preliminary verdict from: verified_true, false, misleading, unverified, outdated, disputed.",
       "If evidence is thin, indirect, or does not address the specific claim, choose unverified with low confidence.",
+      "Decide from what is in front of you. When several independent publishers report the same event, in the same terms as the claim, that is verified_true — do not withhold a verdict just because you cannot open the articles themselves.",
+      "Only choose unverified when the retrieved reports genuinely do not speak to the claim, not because the wording differs slightly.",
       "Corroboration rule: a verdict of verified_true or false requires at least three INDEPENDENT publishers agreeing, or one primary government/court record. If the evidence set has fewer, you must return unverified or disputed and say why.",
       "If the documented event is real but the claim overstates it — a stretch of river described as the whole river, a local report described as a national order — return misleading and say exactly what is exaggerated, rather than unverified.",
       "Treat syndicated copies of one wire story as a single source, not several.",
@@ -688,7 +783,7 @@ export async function runResearch(input: ResearchInput): Promise<ResearchResult>
     let fanout: Awaited<ReturnType<typeof aiFanout>> = [];
     // Retrieval and translation have already spent part of the budget; the model
     // pass gets the rest, capped so a single slow provider cannot own it.
-    const analystBudget = Math.min(90_000, remaining(), 35_000);
+    const analystBudget = Math.min(90_000, remaining(), 40_000);
     if (analystBudget < 15_000) {
       aiNotice = "the model pass was skipped to keep the wait short";
       console.warn("[research] no time left for analysts:", analystBudget, "ms");
@@ -714,6 +809,42 @@ export async function runResearch(input: ResearchInput): Promise<ResearchResult>
     } catch (error) {
       aiNotice = (error as Error).message;
       console.error("[research] analyst pass failed:", aiNotice);
+    }
+
+    /**
+     * Nobody answered. The keyless community model is slow and reasoning-heavy,
+     * so it is kept off the fan-out — but a verdict from it, on the same evidence
+     * with a shorter prompt, is worth more to the reader than no verdict at all.
+     */
+    if (fanout.every((result) => !result.answer)) {
+      const keyless = config.ai.chain.find((endpoint) => endpoint.keyless);
+      const left = remaining();
+      if (keyless && left > 12_000) {
+        try {
+          const solo = await aiComplete(
+            [
+              { role: "system", content: analystSystem },
+              {
+                role: "user",
+                content: `${compactBlock}\nAnswer with JSON only, in the schema given. Be decisive when several publishers report the same thing.`,
+              },
+            ],
+            {
+              prefer: keyless.name,
+              json: true,
+              temperature: 0.1,
+              maxTokens: 900,
+              timeoutMs: Math.min(left - 6_000, 60_000),
+            },
+          );
+          if (solo) {
+            fanout = [{ provider: solo.provider, label: solo.provider, answer: solo, error: undefined }];
+            console.warn(`[research] keyless rescue answered in ${Date.now() - startedAt}ms`);
+          }
+        } catch (error) {
+          console.warn("[research] keyless rescue failed:", (error as Error).message);
+        }
+      }
     }
 
     const assessments: AnalystAssessment[] = [];

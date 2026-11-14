@@ -75,8 +75,7 @@ async function fetchText(url: string, timeoutMs = 12_000): Promise<string | null
   }
 }
 
-/** Google News RSS — free, keyless, and multi-publisher. */
-export async function googleNewsSearch(query: string, limit = 8): Promise<SearchHit[]> {
+async function googleNewsFeed(query: string): Promise<SearchHit[]> {
   const url = `https://news.google.com/rss/search?q=${encodeURIComponent(query)}&hl=en-IN&gl=IN&ceid=IN:en`;
   const xml = await fetchText(url);
   if (!xml) return [];
@@ -96,13 +95,29 @@ export async function googleNewsSearch(query: string, limit = 8): Promise<Search
         publishedAt: toIso(tag(block, "pubDate")),
       } satisfies SearchHit;
     })
-    .filter((hit) => hit.title.length > 10 && /^https?:\/\//.test(hit.url))
-    .slice(0, limit);
+    .filter((hit) => hit.title.length > 10 && /^https?:\/\//.test(hit.url));
+}
+
+/**
+ * Google News RSS — free, keyless, and multi-publisher.
+ *
+ * Recency is the point: a claim asked today should be checked against this
+ * week's reporting, not a two-year-old explainer. The window operator narrows
+ * the index first; if that leaves too little to corroborate, the plain query
+ * runs as well so a genuinely rare claim is not reported as unchecked.
+ */
+export async function googleNewsSearch(query: string, limit = 8, windowDays: number | null = 7): Promise<SearchHit[]> {
+  const windowed = windowDays ? await googleNewsFeed(`${query} when:${windowDays}d`) : [];
+  if (windowed.length >= 3) return windowed.slice(0, limit);
+  const recent = windowed;
+  const plain = await googleNewsFeed(query);
+  const seen = new Set(recent.map((hit) => hit.url.split("?")[0]));
+  return [...recent, ...plain.filter((hit) => !seen.has(hit.url.split("?")[0]))].slice(0, limit);
 }
 
 /** Bing News RSS — a second index, so results are not single-sourced. */
 export async function bingNewsSearch(query: string, limit = 8): Promise<SearchHit[]> {
-  const url = `https://www.bing.com/news/search?q=${encodeURIComponent(query)}&format=RSS&setmkt=en-IN`;
+  const url = `https://www.bing.com/news/search?q=${encodeURIComponent(query)}&format=RSS&setmkt=en-IN&qft=sortbydate%3d%221%22`;
   const xml = await fetchText(url);
   if (!xml) return [];
   const blocks = xml.match(/<item[\s\S]*?<\/item>/gi) ?? [];
@@ -184,7 +199,12 @@ export interface RetrievalSummary {
  * headline. Independent publishers are what the verdict gate counts, so a
  * single syndicated story repeated five times must not look like five sources.
  */
-export async function retrieveEvidence(queries: string[], perQuery = 8): Promise<RetrievalSummary> {
+export async function retrieveEvidence(
+  queries: string[],
+  perQuery = 8,
+  /** null widens the search beyond the recent window, for claims about older events. */
+  windowDays: number | null = 7,
+): Promise<RetrievalSummary> {
   const rooms = queries.slice(0, 4);
   const used = new Set<string>();
   const empty = new Set<string>();
@@ -193,15 +213,24 @@ export async function retrieveEvidence(queries: string[], perQuery = 8): Promise
 
   const jobs: { name: string; run: () => Promise<SearchHit[]> }[] = [];
   for (const query of rooms) {
-    jobs.push({ name: "google-news", run: () => googleNewsSearch(query, perQuery) });
+    jobs.push({ name: "google-news", run: () => googleNewsSearch(query, perQuery, windowDays) });
     jobs.push({ name: "bing-news", run: () => bingNewsSearch(query, perQuery) });
     jobs.push({ name: "trusted-wire", run: () => wireSearch(query, 4) });
   }
   jobs.push({ name: "wikipedia", run: () => wikipediaSearch(rooms[0] ?? "", 3) });
 
+  /**
+   * Every fetch is capped: one slow feed must not eat the model's share of the
+   * request budget, which is what made checks come back with no verdict.
+   */
+  const cap = (promise: Promise<SearchHit[]>, ms: number): Promise<SearchHit[]> =>
+    Promise.race([
+      promise.catch(() => [] as SearchHit[]),
+      new Promise<SearchHit[]>((resolve) => setTimeout(() => resolve([]), ms)),
+    ]);
   const results = await Promise.all(
     jobs.map(async (job) => {
-      const hits = await job.run().catch(() => []);
+      const hits = await cap(job.run(), windowDays === null ? 6_000 : 8_000);
       return { name: job.name, hits };
     }),
   );
@@ -221,7 +250,10 @@ export async function retrieveEvidence(queries: string[], perQuery = 8): Promise
     }
   }
 
-  const hits = Array.from(byUrl.values());
+  // Newest first: the verdict should be about what is being reported now.
+  const hits = Array.from(byUrl.values()).sort(
+    (a, b) => Date.parse(b.publishedAt ?? "0") - Date.parse(a.publishedAt ?? "0"),
+  );
   return { hits, used: Array.from(used), empty: Array.from(empty) };
 }
 

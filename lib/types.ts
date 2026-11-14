@@ -197,6 +197,10 @@ export interface ResearchReport {
   durationMs?: number;
   /** Where the evidence came from: paid search keys, keyless retrievers, or both. */
   searchMode?: "keyed" | "keyless" | "both" | "none";
+  /** Freshest evidence in the set, so a reader can see how current the check is. */
+  newestSourceAt?: string | null;
+  /** How many of the retrieved items were published in the last seven days. */
+  sourcesLast7Days?: number;
   /** Every model that judged the evidence independently, in the order asked. */
   analysts?: AnalystAssessment[];
   /** Who re-checked the analysts, and what they concluded. */

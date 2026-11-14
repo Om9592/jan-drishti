@@ -14,6 +14,7 @@ interface ChatSource {
   publisher: string;
   stance: "supports" | "contradicts" | "context";
   sourceType: string;
+  publishedAt?: string | null;
 }
 
 interface TurnResult {
@@ -30,6 +31,8 @@ interface TurnResult {
   model: string | null;
   recorded: boolean;
   createdAt: string;
+  newestSourceAt?: string | null;
+  sourcesLast7Days?: number;
 }
 
 interface Message {
@@ -56,6 +59,20 @@ const SUGGESTIONS = [
     hi: "क्या सरकार ने इस साल स्कूल दाखिले के लिए आधार अनिवार्य कर दिया है?",
   },
 ];
+
+function timeAgoShort(iso: string | null | undefined, hi: boolean): string {
+  if (!iso) return hi ? "तारीख़ अज्ञात" : "date unknown";
+  const diff = Date.now() - Date.parse(iso);
+  if (!Number.isFinite(diff)) return hi ? "तारीख़ अज्ञात" : "date unknown";
+  const minutes = Math.round(diff / 60000);
+  if (minutes < 60) return hi ? `${minutes} मिनट पहले` : `${minutes}m ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return hi ? `${hours} घंटे पहले` : `${hours}h ago`;
+  const days = Math.round(hours / 24);
+  if (days < 30) return hi ? `${days} दिन पहले` : `${days}d ago`;
+  const months = Math.round(days / 30);
+  return hi ? `${months} महीने पहले` : `${months}mo ago`;
+}
 
 function newThreadId(): string {
   return `t-${Math.random().toString(36).slice(2, 10)}${Date.now().toString(36).slice(-4)}`;
@@ -339,31 +356,51 @@ export function ChatInterface() {
                   )
                 )}
 
-                {message.result && message.result.sources.length > 0 && (
-                  <div className="mt-2.5">
-                    <p className="font-sans text-[0.56rem] uppercase tracking-[0.1em] text-ink-muted">
-                      {hi ? "स्रोत" : "Sources"} · {message.result.sources.length} · {message.result.publishers}{" "}
-                      {hi ? "प्रकाशक" : "publishers"}
-                    </p>
-                    <ul className="mt-1 space-y-1">
-                      {message.result.sources.map((source) => (
-                        <li key={source.n} id={`source-${source.n}`} className="flex gap-2">
-                          <span className="mt-0.5 font-sans text-[0.6rem] text-ink-muted">{source.n}</span>
-                          <a
-                            href={source.url}
-                            target="_blank"
-                            rel="noopener noreferrer nofollow"
-                            className="font-sans text-[0.74rem] leading-snug text-navy underline decoration-rule underline-offset-2 hover:decoration-navy"
-                          >
-                            {source.title}
-                            <ExternalLink className="ml-1 inline h-2.5 w-2.5 align-baseline" aria-hidden="true" />
-                            <span className="ml-1 text-[0.62rem] uppercase tracking-[0.08em] text-ink-muted">
-                              {source.publisher}
-                            </span>
-                          </a>
-                        </li>
-                      ))}
-                    </ul>
+                {message.result && (
+                  <div className="mt-3 border border-rule bg-white">
+                    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-rule bg-paper px-2.5 py-1.5">
+                      <p className="font-sans text-[0.58rem] uppercase tracking-[0.1em] text-navy">
+                        {hi ? "स्रोत" : "Sources"} · {message.result.sources.length} · {message.result.publishers}{" "}
+                        {hi ? "प्रकाशक" : "publishers"}
+                      </p>
+                      {message.result.newestSourceAt && (
+                        <p className="font-sans text-[0.58rem] uppercase tracking-[0.08em] text-ink-muted">
+                          {hi ? "सबसे नया" : "Newest"}: {timeAgoShort(message.result.newestSourceAt, hi)}
+                          {typeof message.result.sourcesLast7Days === "number" &&
+                            ` · ${message.result.sourcesLast7Days} ${hi ? "इस हफ़्ते" : "this week"}`}
+                        </p>
+                      )}
+                    </div>
+                    {message.result.sources.length === 0 ? (
+                      <p className="flex items-start gap-2 px-2.5 py-2 font-sans text-[0.72rem] leading-relaxed text-verdict-misleading">
+                        <TriangleAlert className="mt-0.5 h-3 w-3 shrink-0" aria-hidden="true" />
+                        {hi
+                          ? "कोई स्रोत नहीं मिला — यह जाँच नहीं हो सकी, यह नतीजा नहीं है।"
+                          : "No source was retrieved — the check could not run. This is not a finding."}
+                      </p>
+                    ) : (
+                      <ol className="divide-y divide-rule">
+                        {message.result.sources.map((source) => (
+                          <li key={source.n} id={`source-${source.n}`} className="flex gap-2 px-2.5 py-1.5">
+                            <span className="mt-0.5 w-4 shrink-0 font-sans text-[0.62rem] text-ink-muted">{source.n}</span>
+                            <div className="min-w-0">
+                              <a
+                                href={source.url}
+                                target="_blank"
+                                rel="noopener noreferrer nofollow"
+                                className="font-sans text-[0.76rem] leading-snug text-navy underline decoration-rule underline-offset-2 hover:decoration-navy"
+                              >
+                                {source.title}
+                                <ExternalLink className="ml-1 inline h-2.5 w-2.5 align-baseline" aria-hidden="true" />
+                              </a>
+                              <p className="font-sans text-[0.6rem] uppercase tracking-[0.08em] text-ink-muted">
+                                {source.publisher} · {timeAgoShort(source.publishedAt, hi)}
+                              </p>
+                            </div>
+                          </li>
+                        ))}
+                      </ol>
+                    )}
                   </div>
                 )}
 
