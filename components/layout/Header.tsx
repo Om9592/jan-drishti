@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Menu, Search, X, UserRound, ChevronRight } from "lucide-react";
+import { Sparkles, Menu, Search, X, UserRound, ChevronRight } from "lucide-react";
 import { Wordmark } from "@/components/ui/MastheadMark";
 import { LanguageSwitcher } from "@/components/layout/LanguageSwitcher";
 import { SearchDialog } from "@/components/layout/SearchDialog";
@@ -148,6 +148,13 @@ export function Header({ categories, latestHeadline, viewer }: HeaderProps) {
               <span className="max-w-[7rem] truncate">{accountLabel}</span>
             </Link>
             <Link
+              href="/ask"
+              className="hidden items-center gap-1.5 border border-gold-dark bg-gold/[0.12] px-3 py-2 font-sans text-[0.65rem] uppercase tracking-[0.12em] text-gold-dark transition-colors hover:bg-gold-dark hover:text-paper sm:inline-flex"
+            >
+              <Sparkles className="h-3 w-3" aria-hidden="true" />
+              {t("nav.ask")}
+            </Link>
+            <Link
               href="/submit"
               className="hidden items-center gap-1.5 border border-navy px-3 py-2 font-sans text-[0.65rem] uppercase tracking-[0.12em] text-navy transition-colors hover:bg-navy hover:text-paper lg:inline-flex"
             >
@@ -192,26 +199,6 @@ export function Header({ categories, latestHeadline, viewer }: HeaderProps) {
                 </Link>
               </li>
             ))}
-
-            <li className="shrink-0">
-              <Link
-                href="/ask"
-                aria-current={isActive("/ask") ? "page" : undefined}
-                className={cn(
-                  "group relative flex h-11 items-center gap-1 px-2.5 font-sans text-[0.68rem] uppercase tracking-[0.11em] transition-colors lg:px-3",
-                  isActive("/ask") ? "text-gold-dark" : "text-gold-dark hover:text-navy",
-                )}
-              >
-                {t("nav.ask")}
-                <span
-                  className={cn(
-                    "absolute inset-x-2 bottom-0 h-[2px] bg-gold transition-transform duration-200 ease-editorial",
-                    isActive("/ask") ? "scale-x-100" : "scale-x-0 group-hover:scale-x-100",
-                  )}
-                  aria-hidden="true"
-                />
-              </Link>
-            </li>
 
             <li className="shrink-0">
               <Link
@@ -302,12 +289,7 @@ export function Header({ categories, latestHeadline, viewer }: HeaderProps) {
           >
             <Menu className="h-4 w-4" aria-hidden="true" /> {t("nav.menu")}
           </button>
-          <Link
-            href="/ask"
-            className="font-sans text-[0.7rem] uppercase tracking-[0.12em] text-gold-dark"
-          >
-            {t("nav.ask")}
-          </Link>
+
           <Link
             href="/submit"
             className="font-sans text-[0.7rem] uppercase tracking-[0.12em] text-navy"
