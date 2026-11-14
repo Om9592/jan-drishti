@@ -28,13 +28,91 @@ const AI_PRESETS = {
     baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
     model: "gemini-3.5-flash",
   },
+  // Free tiers, in the order they are worth reaching for: Groq is fast and
+  // generous, OpenRouter's ":free" models need no card, Cerebras is small but
+  // quick. Any of these keys present in the environment joins the chain.
   groq: { name: "groq", baseUrl: "https://api.groq.com/openai/v1", model: "llama-3.3-70b-versatile" },
-  openrouter: { name: "openrouter", baseUrl: "https://openrouter.ai/api/v1", model: "google/gemini-2.0-flash-001" },
+  openrouter: { name: "openrouter", baseUrl: "https://openrouter.ai/api/v1", model: "meta-llama/llama-3.3-70b-instruct:free" },
+  cerebras: { name: "cerebras", baseUrl: "https://api.cerebras.ai/v1", model: "llama3.1-8b" },
+  mistral: { name: "mistral", baseUrl: "https://api.mistral.ai/v1", model: "mistral-small-latest" },
   deepseek: { name: "deepseek", baseUrl: "https://api.deepseek.com/v1", model: "deepseek-chat" },
+  /**
+   * No signup, no key, no card: the community Pollinations endpoint speaks the
+   * same OpenAI shape and serves an open-weights reasoning model. It is rate
+   * limited to roughly one answer per 45 s per IP, so it is the LAST resort and
+   * it waits its turn — used when every keyed provider is exhausted or absent.
+   */
+  pollinations: { name: "pollinations", baseUrl: "https://text.pollinations.ai/openai", model: "openai" },
 } as const;
 
-const AI_PRESET =
-  AI_PRESETS[(env("AI_PROVIDER") ?? "openai").toLowerCase() as keyof typeof AI_PRESETS] ?? AI_PRESETS.openai;
+export interface AiEndpoint {
+  name: string;
+  label: string;
+  baseUrl: string;
+  apiKey: string | null;
+  model: string;
+  /** True for the keyless community endpoint. */
+  keyless: boolean;
+}
+
+type PresetName = keyof typeof AI_PRESETS;
+const AI_PRESET_NAME = (env("AI_PROVIDER") ?? "gemini").toLowerCase();
+const AI_PRESET: (typeof AI_PRESETS)[PresetName] =
+  AI_PRESETS[AI_PRESET_NAME as PresetName] ?? AI_PRESETS.openai;
+
+/**
+ * Providers are tried in order until one answers. A desk with a free key should
+ * never be dead because that one key hit its daily cap, so the chain ends at a
+ * keyless endpoint whenever `AI_KEYLESS_FALLBACK` is not set to 0.
+ */
+function buildAiChain(): AiEndpoint[] {
+  const chain: AiEndpoint[] = [];
+  const primaryKey = env("AI_API_KEY") ?? env("OPENAI_API_KEY");
+  if (primaryKey && AI_PRESET.name !== "pollinations") {
+    chain.push({
+      name: AI_PRESET.name,
+      label: `${AI_PRESET.name} (${env("AI_MODEL") ?? AI_PRESET.model})`,
+      baseUrl: (env("AI_BASE_URL") ?? AI_PRESET.baseUrl).replace(/\/$/, ""),
+      apiKey: primaryKey,
+      model: env("AI_MODEL") ?? AI_PRESET.model,
+      keyless: false,
+    });
+  }
+  // Other free keys, if the desk happens to have them.
+  const extras: { preset: PresetName; key?: string; modelEnv: string }[] = [
+    { preset: "groq", key: env("GROQ_API_KEY"), modelEnv: "GROQ_MODEL" },
+    { preset: "openrouter", key: env("OPENROUTER_API_KEY"), modelEnv: "OPENROUTER_MODEL" },
+    { preset: "cerebras", key: env("CEREBRAS_API_KEY"), modelEnv: "CEREBRAS_MODEL" },
+    { preset: "mistral", key: env("MISTRAL_API_KEY"), modelEnv: "MISTRAL_MODEL" },
+  ];
+  for (const extra of extras) {
+    if (!extra.key || chain.some((endpoint) => endpoint.name === extra.preset)) continue;
+    const preset = AI_PRESETS[extra.preset];
+    chain.push({
+      name: preset.name,
+      label: `${preset.name} (${env(extra.modelEnv) ?? preset.model})`,
+      baseUrl: preset.baseUrl.replace(/\/$/, ""),
+      apiKey: extra.key,
+      model: env(extra.modelEnv) ?? preset.model,
+      keyless: false,
+    });
+  }
+  if (env("AI_KEYLESS_FALLBACK") !== "0") {
+    const preset = AI_PRESETS.pollinations;
+    chain.push({
+      name: preset.name,
+      label: "pollinations (keyless, gpt-oss-20b)",
+      baseUrl: preset.baseUrl,
+      apiKey: null,
+      model: env("AI_KEYLESS_MODEL") ?? preset.model,
+      keyless: true,
+    });
+  }
+  return chain;
+}
+
+const AI_CHAIN = buildAiChain();
+const AI_PRIMARY = AI_CHAIN[0];
 
 const firebaseProjectId = env("FIREBASE_PROJECT_ID") ?? env("NEXT_PUBLIC_FIREBASE_PROJECT_ID");
 const firebaseClientKey =
@@ -59,10 +137,12 @@ export const config = {
     serviceAccountJson: env("FIREBASE_SERVICE_ACCOUNT_JSON"),
   },
   ai: {
-    apiKey: env("AI_API_KEY") ?? env("OPENAI_API_KEY"),
-    baseUrl: (env("AI_BASE_URL") ?? AI_PRESET.baseUrl).replace(/\/$/, ""),
-    model: env("AI_MODEL") ?? AI_PRESET.model,
-    provider: AI_PRESET.name,
+    /** Providers in failover order; the first entry is the primary. */
+    chain: AI_CHAIN,
+    apiKey: AI_PRIMARY?.apiKey ?? undefined,
+    baseUrl: AI_PRIMARY?.baseUrl ?? "",
+    model: AI_PRIMARY?.model ?? "",
+    provider: AI_PRIMARY?.name ?? "none",
     /** Optional secondary model used only for translation drafting. */
     translationModel: env("AI_TRANSLATION_MODEL"),
     /**
@@ -109,7 +189,7 @@ export function isFirebaseAdminConfigured(): boolean {
 }
 
 export function isAiConfigured(): boolean {
-  return Boolean(config.ai.apiKey);
+  return config.ai.chain.length > 0;
 }
 
 export function isSearchConfigured(): boolean {

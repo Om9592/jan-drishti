@@ -427,7 +427,7 @@ export async function runResearch(input: ResearchInput): Promise<ResearchResult>
   report.searchMode = searchMode;
 
   if (isAiConfigured() && evidence.length > 0) {
-    let synthesis: { text: string; model: string } | null = null;
+    let synthesis: Awaited<ReturnType<typeof aiComplete>> = null;
     try {
       synthesis = await aiComplete(
         [
@@ -470,7 +470,7 @@ export async function runResearch(input: ResearchInput): Promise<ResearchResult>
         const parsed = aiSynthesisSchema.parse(parseJsonLoose(synthesis.text));
         report = {
           ...report,
-          model: synthesis.model,
+          model: `${synthesis.model} · ${synthesis.provider}`,
           supportingSummaryEn: parsed.supportingSummaryEn,
           contradictingSummaryEn: parsed.contradictingSummaryEn,
           missingContextEn: parsed.missingContextEn,
@@ -558,9 +558,11 @@ export function researchCapabilities() {
     evidence: true,
     model: isAiConfigured() ? config.ai.model : null,
     provider: isAiConfigured() ? config.ai.provider : null,
+    /** Every provider the desk will try, in order — keyless last. */
+    providers: config.ai.chain.map((endpoint) => endpoint.label),
     /** What the desk would need to add for full AI synthesis. */
     needs: isAiConfigured()
       ? []
-      : ["AI_API_KEY (AI_PROVIDER=gemini|groq|openai|openrouter|deepseek — any one key works)"],
+      : ["AI_API_KEY (gemini|groq|openrouter|cerebras|mistral|deepseek) — or set AI_KEYLESS_FALLBACK=1 for the keyless endpoint"],
   };
 }

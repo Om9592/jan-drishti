@@ -47,7 +47,7 @@ interface AiOptions {
   json?: boolean;
   maxTokens?: number;
   model?: string;
-  /** Hard deadline per attempt. Structured pipeline calls set this explicitly. */
+  /** Hard deadline for the whole call, across every provider in the chain. */
   timeoutMs?: number;
   /** "minimal" | "low" | "medium" | "high"; omitted when undefined. */
   reasoningEffort?: string | null;
@@ -55,12 +55,91 @@ interface AiOptions {
   retryOnTruncation?: boolean;
 }
 
-/** OpenAI-compatible chat completion. Returns null when no key is configured. */
-export async function aiComplete(messages: AiMessage[], options?: AiOptions): Promise<{ text: string; model: string } | null> {
-  if (!isAiConfigured()) return null;
-  const first = await aiRequest(messages, options);
-  // A dead provider (timeout, 5xx, network) is not worth a second wait: that
-  // only doubles the latency of a request the editor is staring at.
+export interface AiAnswer {
+  text: string;
+  model: string;
+  provider: string;
+  finishReason?: string;
+}
+
+export class AiError extends Error {
+  constructor(
+    message: string,
+    readonly status?: number,
+    /** Milliseconds the provider asked us to wait before trying again. */
+    readonly retryAfterMs?: number,
+  ) {
+    super(message);
+    this.name = "AiError";
+  }
+}
+
+/**
+ * OpenAI-compatible chat completion with provider failover.
+ *
+ * The chain is tried in order: a free key that hit its daily cap, a retired
+ * model id, a timeout or a 5xx all hand the work to the next provider instead
+ * of failing the run. When everything fails the error names every provider and
+ * every reason, so an editor can tell "quota" from "bad key".
+ */
+export async function aiComplete(messages: AiMessage[], options?: AiOptions): Promise<AiAnswer | null> {
+  const chain = config.ai.chain;
+  if (chain.length === 0) return null;
+
+  const budget = options?.timeoutMs ?? 60_000;
+  const deadline = Date.now() + budget;
+  const failures: string[] = [];
+
+  for (let index = 0; index < chain.length; index += 1) {
+    const endpoint = chain[index];
+    const remaining = deadline - Date.now();
+    if (remaining < 5_000) {
+      failures.push(`${endpoint.label}: skipped, no time left`);
+      continue;
+    }
+    // The primary keeps most of the budget because it is the best model; the
+    // fallbacks need far less to answer the same small JSON.
+    const endpointsLeft = chain.length - index;
+    const slice =
+      endpointsLeft === 1
+        ? remaining
+        : Math.min(remaining, index === 0 ? Math.max(20_000, Math.round(remaining * 0.75)) : 45_000);
+
+    try {
+      const answer = await attempt(endpoint, messages, options, Math.min(slice, remaining));
+      if (answer) return answer;
+      failures.push(`${endpoint.label}: no answer`);
+    } catch (error) {
+      const failure = error as AiError;
+      failures.push(`${endpoint.label}: ${failure.message}`);
+      // A keyless endpoint that is merely waiting its turn is worth waiting for.
+      if (failure.retryAfterMs && failure.retryAfterMs <= 45_000) {
+        const left = deadline - Date.now() - failure.retryAfterMs;
+        if (left > 5_000) {
+          console.warn(`[ai] ${endpoint.name} is rate limited, waiting ${Math.round(failure.retryAfterMs / 1000)}s`);
+          await new Promise((resolve) => setTimeout(resolve, failure.retryAfterMs));
+          try {
+            const answer = await attempt(endpoint, messages, options, Math.min(45_000, deadline - Date.now()));
+            if (answer) return answer;
+          } catch (retryError) {
+            failures.push(`${endpoint.label}: ${(retryError as Error).message}`);
+          }
+        }
+      }
+    }
+  }
+
+  throw new AiError(`No AI provider answered. ${failures.join(" | ")}`, 502);
+}
+
+/** One provider, one deadline, plus a truncation retry. Never throws null-ish. */
+async function attempt(
+  endpoint: AiEndpointT,
+  messages: AiMessage[],
+  options: AiOptions | undefined,
+  timeoutMs: number,
+): Promise<AiAnswer | null> {
+  const first = await aiRequest(endpoint, messages, options, timeoutMs);
   if (!first) return null;
   if (first.finishReason !== "length" && !looksTruncated(first.text)) return first;
   if (options?.retryOnTruncation === false) return first;
@@ -69,18 +148,10 @@ export async function aiComplete(messages: AiMessage[], options?: AiOptions): Pr
    * thinking and can return an empty `content` with finish_reason "length".
    * One retry with a much larger budget fixes that without guessing.
    */
-  return aiRequest(messages, { ...options, maxTokens: Math.max((options?.maxTokens ?? 1800) * 2, 3000) });
+  return aiRequest(endpoint, messages, { ...options, maxTokens: Math.max((options?.maxTokens ?? 1800) * 2, 3000) }, timeoutMs);
 }
 
-export class AiError extends Error {
-  constructor(
-    message: string,
-    readonly status?: number,
-  ) {
-    super(message);
-    this.name = "AiError";
-  }
-}
+type AiEndpointT = (typeof config.ai.chain)[number];
 
 function looksTruncated(text: string): boolean {
   const trimmed = text.trim();
@@ -93,90 +164,105 @@ function looksTruncated(text: string): boolean {
   return depth !== 0;
 }
 
-async function aiRequest(messages: AiMessage[], options?: AiOptions): Promise<{ text: string; model: string; finishReason?: string } | null> {
-  const model = options?.model ?? config.ai.model;
-  const timeoutMs = options?.timeoutMs ?? 45_000;
-  const reasoningEffort = options?.reasoningEffort === undefined ? config.ai.reasoningEffort : options.reasoningEffort;
+async function aiRequest(
+  endpoint: AiEndpointT,
+  messages: AiMessage[],
+  options: AiOptions | undefined,
+  timeoutMs: number,
+): Promise<AiAnswer | null> {
+  const model = options?.model ?? endpoint.model;
+  const requestedEffort = options?.reasoningEffort === undefined ? config.ai.reasoningEffort : options.reasoningEffort;
+  // Open-weights servers disagree about the scale: Harmony takes high/medium/low
+  // and rejects "minimal" outright, so map it down instead of losing the call.
+  const reasoningEffort =
+    requestedEffort === "minimal" && endpoint.keyless ? "low" : requestedEffort;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (endpoint.apiKey) headers.Authorization = `Bearer ${endpoint.apiKey}`;
   try {
-    const payload = JSON.stringify({
-      model,
-      messages,
-      temperature: options?.temperature ?? 0.1,
-      max_tokens: options?.maxTokens ?? 1800,
-      ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
-      ...(options?.json ? { response_format: { type: "json_object" } } : {}),
-    });
-    let response = await fetch(`${config.ai.baseUrl}/chat/completions`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${config.ai.apiKey}`,
-      },
-      body: payload,
-      signal: controller.signal,
-    });
-    // Free-tier keys are rate limited per minute and the fleet is often busy:
-    // one short pause is usually enough, and waiting is cheaper than giving up.
+    const payload = (effort: string | null | undefined) =>
+      JSON.stringify({
+        model,
+        messages,
+        temperature: options?.temperature ?? 0.1,
+        max_tokens: options?.maxTokens ?? 1800,
+        ...(effort ? { reasoning_effort: effort } : {}),
+        ...(options?.json ? { response_format: { type: "json_object" } } : {}),
+      });
+    const send = (effort: string | null | undefined = reasoningEffort) =>
+      fetch(`${endpoint.baseUrl}/chat/completions`, {
+        method: "POST",
+        headers,
+        body: payload(effort),
+        signal: controller.signal,
+      });
+
+    let response = await send();
+    // Free tiers are rate limited per minute and the fleet is often busy: one
+    // short pause is usually enough, and waiting is cheaper than giving up.
     for (const wait of [4000, 8000]) {
       if (response.ok || (response.status !== 429 && response.status < 500)) break;
       const jitter = wait + Math.floor(Math.random() * 1500);
-      console.warn("[ai] busy", response.status, `- retrying in ${jitter}ms`);
+      console.warn(`[ai] ${endpoint.name} busy`, response.status, `- retrying in ${jitter}ms`);
       await new Promise((resolve) => setTimeout(resolve, jitter));
-      response = await fetch(`${config.ai.baseUrl}/chat/completions`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${config.ai.apiKey}`,
-        },
-        body: payload,
-        signal: controller.signal,
-      });
+      response = await send();
+    }
+    if (response.status === 400) {
+      // Some servers reject the parameter name rather than its value; the JSON
+      // answer does not need it, so ask again without it before giving up.
+      const probe = await response.clone().text().catch(() => "");
+      if (/reasoning_effort/i.test(probe)) {
+        console.warn(`[ai] ${endpoint.name} rejected reasoning_effort, retrying without it`);
+        response = await send(null);
+      }
     }
     if (!response.ok) {
       const body = await response.text().catch(() => "");
-      console.error("[ai] provider error", response.status, body.slice(0, 400));
+      console.error(`[ai] ${endpoint.name} error`, response.status, body.slice(0, 400));
       // Model ids get retired: say so loudly instead of returning "no answer".
       if (response.status === 404 && /model/i.test(body)) {
         throw new AiError(
-          `The configured model "${model}" is not available to this API key. Set AI_MODEL to a model your key lists.`,
+          `The model "${model}" is not available to this key. Set the provider's model env var to one it lists.`,
           404,
         );
       }
       if (response.status === 401 || response.status === 403) {
-        throw new AiError("The AI provider rejected the API key.", response.status);
+        throw new AiError("The provider rejected the API key.", response.status);
       }
-      // Gemini's free tier is 20 requests/day per model: an exhausted key looks
-      // like a generic outage unless it is named.
-      if (response.status === 429) {
+      if (response.status === 402 || response.status === 429) {
+        const retryAfter = Number((body.match(/retry after (\d+)\s*s/i) ?? [])[1] ?? NaN);
         throw new AiError(
           /free_tier|free tier/i.test(body)
-            ? "The AI provider's free-tier daily quota is exhausted. Enable billing on the key, or wait for the daily reset."
-            : "The AI provider is rate limiting this key. Retry shortly.",
-          429,
+            ? "The provider's free-tier daily quota is exhausted."
+            : /FREE_LIMIT/i.test(body)
+              ? "The keyless endpoint allows one answer every 45 seconds and is cooling down."
+              : "The provider is rate limiting this key.",
+          response.status,
+          Number.isFinite(retryAfter) ? retryAfter * 1000 : undefined,
         );
       }
-      throw new AiError(`The AI provider returned HTTP ${response.status}.`, response.status);
+      throw new AiError(`The provider returned HTTP ${response.status}.`, response.status);
     }
     const data = (await response.json()) as {
       choices?: { message?: { content?: string }; finish_reason?: string }[];
+      model?: string;
     };
     const choice = data.choices?.[0];
     const text = choice?.message?.content;
     if (!text) {
-      console.error("[ai] empty completion", choice?.finish_reason);
+      console.error(`[ai] ${endpoint.name} empty completion`, choice?.finish_reason);
       throw new AiError(`The model returned no text (finish_reason: ${choice?.finish_reason ?? "unknown"}).`, 502);
     }
-    return { text, model, finishReason: choice?.finish_reason };
+    return { text, model: data.model ?? model, provider: endpoint.name, finishReason: choice?.finish_reason };
   } catch (error) {
     if (error instanceof AiError) throw error;
     if ((error as Error)?.name === "AbortError") {
-      console.error("[ai] timeout after", timeoutMs, "ms");
-      throw new AiError(`The AI provider did not answer within ${Math.round(timeoutMs / 1000)}s.`, 408);
+      console.error(`[ai] ${endpoint.name} timeout after`, timeoutMs, "ms");
+      throw new AiError(`did not answer within ${Math.round(timeoutMs / 1000)}s.`, 408);
     }
-    console.error("[ai] request failed", (error as Error)?.message ?? error);
-    throw new AiError("The AI provider request failed (network error).", 502);
+    console.error(`[ai] ${endpoint.name} request failed`, (error as Error)?.message ?? error);
+    throw new AiError("request failed (network error).", 502);
   } finally {
     clearTimeout(timeout);
   }

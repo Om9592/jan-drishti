@@ -57,6 +57,7 @@ asserted that was not executed. Where something could not be done, it says so pl
 
 | Gap | What is blocked | What fixes it |
 | --- | --- | --- |
+| AI provider chain | Providers are tried in order — your key, then any other free key in the env, then a **keyless free endpoint** (Pollinations, open-weights `gpt-oss-20b`, no signup, no card, ≈1 answer/45 s/IP). A dead key, a retired model id, a timeout or an exhausted quota hands the run to the next provider instead of failing it | Nothing to buy. For better answers, paste any free key (`GROQ_API_KEY`, `OPENROUTER_API_KEY`, `CEREBRAS_API_KEY`) in Vercel → it is used before the keyless endpoint |
 | AI synthesis quota | `AI_API_KEY` is configured in Vercel (`gemini-3.5-flash`) and the synthesis is verified working — but a **Free Tier key allows 20 generate-content requests per day per model**, and one research run is one call. Past the cap the provider answers `429` and the run honestly reports "free-tier daily quota exhausted" instead of inventing a verdict | Enable billing on the Gemini API key (pay-as-you-go), or wait for the daily reset, or point `AI_PROVIDER`/`AI_API_KEY` at another provider (groq/openai/openrouter/deepseek presets exist) |
 | Composite indexes | 14 queries fall back to in-memory sorting past ~500 docs | `firebase deploy --only firestore:indexes` or create them in the console |
 | Image uploads | Storage bucket needs the Blaze plan | Upgrade the Firebase project, then set the bucket |
