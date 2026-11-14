@@ -147,6 +147,16 @@ async function aiRequest(messages: AiMessage[], options?: AiOptions): Promise<{ 
       if (response.status === 401 || response.status === 403) {
         throw new AiError("The AI provider rejected the API key.", response.status);
       }
+      // Gemini's free tier is 20 requests/day per model: an exhausted key looks
+      // like a generic outage unless it is named.
+      if (response.status === 429) {
+        throw new AiError(
+          /free_tier|free tier/i.test(body)
+            ? "The AI provider's free-tier daily quota is exhausted. Enable billing on the key, or wait for the daily reset."
+            : "The AI provider is rate limiting this key. Retry shortly.",
+          429,
+        );
+      }
       throw new AiError(`The AI provider returned HTTP ${response.status}.`, response.status);
     }
     const data = (await response.json()) as {

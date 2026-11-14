@@ -41,7 +41,11 @@ asserted that was not executed. Where something could not be done, it says so pl
   corroboration gate before any yes/no recommendation; provider presets so one
   `AI_API_KEY` (`AI_PROVIDER=gemini|groq|openai|openrouter|deepseek`) enables
   synthesis; `sourcesUsed` / `independentSources` / `durationMs` recorded and shown
-  in the review screen.
+  in the review screen. One model call per run by default (`RESEARCH_AI_EXTRACTION=0`):
+  deterministic queries already retrieve the evidence, so the single call is spent
+  on the verdict. Every provider failure — retired model id, rejected key, timeout,
+  exhausted free-tier quota — is named in the run's steps, never hidden behind
+  "did not respond".
 - **Bugs fixed on the way**: categories/sources/submissions/corrections returned
   Firestore `Timestamp` objects to Client Components, which crashed
   `/admin/articles/new` and `/contribute/desk/new` with a 500 — all store reads now
@@ -53,7 +57,7 @@ asserted that was not executed. Where something could not be done, it says so pl
 
 | Gap | What is blocked | What fixes it |
 | --- | --- | --- |
-| AI synthesis | No model key on the deployment, so the model never runs; the desk gets the evidence file only | Add `AI_API_KEY` (+ `AI_PROVIDER`) in Vercel → the same run then cross-checks sources and recommends a verdict in seconds |
+| AI synthesis quota | `AI_API_KEY` is configured in Vercel (`gemini-3.5-flash`) and the synthesis is verified working — but a **Free Tier key allows 20 generate-content requests per day per model**, and one research run is one call. Past the cap the provider answers `429` and the run honestly reports "free-tier daily quota exhausted" instead of inventing a verdict | Enable billing on the Gemini API key (pay-as-you-go), or wait for the daily reset, or point `AI_PROVIDER`/`AI_API_KEY` at another provider (groq/openai/openrouter/deepseek presets exist) |
 | Composite indexes | 14 queries fall back to in-memory sorting past ~500 docs | `firebase deploy --only firestore:indexes` or create them in the console |
 | Image uploads | Storage bucket needs the Blaze plan | Upgrade the Firebase project, then set the bucket |
 | Google sign-in | Google IdP is disabled for the project | Enable it in Firebase console → Authentication → Sign-in method |

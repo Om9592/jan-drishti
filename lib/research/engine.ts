@@ -241,7 +241,9 @@ export async function runResearch(input: ResearchInput): Promise<ResearchResult>
   let entities = fallback.entities;
 
   let aiNotice: string | null = null;
-  if (isAiConfigured()) {
+  // The verdict is what the model is for. Extraction is optional, opt-in, and
+  // skipped by default so a limited key still gets its one call.
+  if (isAiConfigured() && config.ai.aiExtraction) {
     let extraction: { text: string; model: string } | null = null;
     try {
       extraction = await aiComplete(
@@ -296,7 +298,13 @@ export async function runResearch(input: ResearchInput): Promise<ResearchResult>
       setStep("queries", "done");
     }
   } else {
-    setStep("extract", "done", "Deterministic extraction (no AI provider configured).");
+    setStep(
+      "extract",
+      "done",
+      isAiConfigured()
+        ? "Deterministic extraction (model call reserved for the verdict; set RESEARCH_AI_EXTRACTION=1 to use AI here)."
+        : "Deterministic extraction (no AI provider configured).",
+    );
     setStep("entities", "done", `${entities.length} possible entity name(s).`);
     setStep("queries", "done", "Queries generated from claim text.");
   }

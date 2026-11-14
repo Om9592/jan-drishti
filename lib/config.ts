@@ -71,6 +71,12 @@ export const config = {
      * a request deadline, so structured calls ask for the smallest effort.
      */
     reasoningEffort: env("AI_REASONING_EFFORT") ?? "minimal",
+    /**
+     * A research run needs one model call to write the verdict. Spending a
+     * second call on claim extraction is a luxury: keyless retrieval already
+     * works from deterministic queries, and free tiers allow 20 calls a day.
+     */
+    aiExtraction: env("RESEARCH_AI_EXTRACTION") === "1",
   },
   search: {
     tavilyKey: env("TAVILY_API_KEY"),
