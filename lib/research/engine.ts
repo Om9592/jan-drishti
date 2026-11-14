@@ -64,6 +64,11 @@ const STOPWORDS = new Set(
   ("a an and are as at be been being by for from had has have he her his i in into is it its of on or our " +
     "said says she that the their them there these they this those to was were what when where which who why " +
     "will with would you your more than over under after before during also just only very much many some " +
+    "did does do done doing make made makes made get got give given take taken said told ask asked " +
+    "am are was were be been being having had having can could should may might must shall ought " +
+    "here there then them they these those this that which what when where who whom whose why how " +
+    "government govt govt sarkar official officials ministry minister report reports year years today " +
+    "people person video viral post claim claims news story stories india indian state states country " +
     "news claim claims claimed viral video videos post reportedly report reports according source sources " +
     "true false real fake hoax rumour rumor fact check checking ask question tell know think really actually " +
     "please sir madam yes no not dont doesn didn cant cannot could should must may might shall " +

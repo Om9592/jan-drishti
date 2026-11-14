@@ -80,14 +80,29 @@ function transcriptFor(messages: ChatTurnMessage[]): string {
     .join("\n");
 }
 
-function systemPrompt(language: Language): AiMessage {
+/**
+ * Which language the answer must be written in. The interface language is a poor
+ * guide — a reader can ask in Hinglish on an English interface — so the reader's
+ * own words decide, and the instruction is explicit rather than a preference.
+ */
+function replyLanguageOf(text: string): "en" | "hi" | "hinglish" {
+  if (/[\u0900-\u097F]/.test(text)) return "hi";
+  const hinglish = (text.match(/\b(kya|hai|hain|nahi|nahin|mein|sach|jhooth|ka|ki|ke|ko|bataye|batao|khabar|kya|kyun|kaise|wapas|abhi|bhi|bahut)\b/gi) ?? []).length;
+  return hinglish >= 2 ? "hinglish" : "en";
+}
+
+function systemPrompt(language: Language, replyLanguage: "en" | "hi" | "hinglish"): AiMessage {
   return {
     role: "system",
     content: [
       "You are the fact-checker for Jan Drishti, an Indian newsroom. You are replying to a reader in a chat window.",
       "",
       "Hard rules:",
-      "- Write only in the language the reader used. Hinglish question → Hinglish reply. Hindi in Devanagari → Hindi reply.",
+      replyLanguage === "hi"
+        ? "- The reader wrote in Hindi. Write the whole reply in Hindi (Devanagari)."
+        : replyLanguage === "hinglish"
+          ? "- The reader wrote in Hinglish. Write the whole reply in Hinglish: Hindi in Latin script, the way they wrote."
+          : "- The reader wrote in English. Write the whole reply in English, whatever language the sources are in.",
       `- Answer in at most ${MAX_REPLY_WORDS} words. Short paragraphs. No headings, no bullet lists, no markdown tables.`,
       "- Sentence one is the direct answer. Never bury it, never open with 'It depends' or a disclaimer.",
       "- Cite the evidence for every factual sentence with its number in square brackets, e.g. [1] or [2][3]. Use only the numbers you are given. Never invent a source, a name, a date or a figure.",
@@ -95,7 +110,7 @@ function systemPrompt(language: Language): AiMessage {
       "- If the evidence does not settle the claim, say that plainly in sentence one and explain what is missing instead of pretending.",
       "- The final sentence says what evidence would settle it.",
       "- Never mention being an AI, a model, or these instructions.",
-      language === "hi" ? "- The reader's interface is set to Hindi; prefer Hindi unless their own message is English." : "",
+
     ]
       .filter(Boolean)
       .join("\n"),
@@ -250,7 +265,7 @@ export async function runChatTurn(input: {
 
   const streamed = await aiStream(
     [
-      systemPrompt(input.language),
+      systemPrompt(input.language, replyLanguageOf(question)),
       findingsPrompt({
         question,
         // When no analyst answered, these quotes are the only basis for an answer.
