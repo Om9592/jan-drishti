@@ -35,6 +35,7 @@ interface PublicAnswer {
   flags: string[];
   createdAt: string;
   machine: true;
+  recorded?: boolean;
 }
 
 const STEPS = [
@@ -266,6 +267,15 @@ export function AskAiForm() {
               ? "यह मशीन का जवाब है, संपादक का फ़ैसला नहीं। स्रोत नीचे दिए हैं — खुद भी देख लें। यह जाँच संपादकीय डेस्क के रिकॉर्ड में दर्ज हो गई है; प्रकाशित निर्णय केवल मानव संपादक देता है।"
               : "This is a machine answer, not an editor's verdict. The sources are listed above so you can check them yourself. This check has been recorded for the editorial desk; published verdicts are issued only after human review."}
           </p>
+
+          {answer.recorded === false && (
+            <p className="mt-2 flex items-start gap-2 font-sans text-[0.68rem] leading-relaxed text-verdict-misleading">
+              <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+              {hi
+                ? "सूचना: यह जाँच संपादकीय डेस्क के रिकॉर्ड में दर्ज नहीं हो सकी।"
+                : "Note: this check could not be logged for the editorial desk."}
+            </p>
+          )}
 
           <div className="mt-3 flex flex-wrap items-center gap-3">
             <Link href="/fact-check" className="btn-outline">

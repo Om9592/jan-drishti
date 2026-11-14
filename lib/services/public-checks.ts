@@ -175,11 +175,36 @@ export async function answerPublicCheck(input: {
   if (db) {
     try {
       const ref = db.collection(COLLECTIONS.publicChecks).doc(answer.id);
-      await ref.set({ ...answer, ipHash: input.ipHash });
+      // Firestore rejects a document containing an undefined field, and every
+      // optional field here (a source note, a model name) can be absent. Write
+      // the JSON form, which has already dropped those keys.
+      await ref.set(JSON.parse(JSON.stringify({ ...answer, ipHash: input.ipHash })));
       // Read it back: an answer the desk cannot see is a promise, not a record.
       recorded = (await ref.get()).exists;
     } catch (error) {
-      console.error("[public-check] failed to record the answer", error);
+      console.error("[public-check] full record failed, keeping a minimal one", error);
+      // The reader already has the answer. At minimum the desk must learn that a
+      // check happened, even if the rich record could not be written.
+      try {
+        const ref = db.collection(COLLECTIONS.publicChecks).doc(answer.id);
+        await ref.set({
+          id: answer.id,
+          claim: answer.claim,
+          verdict: answer.verdict,
+          confidence: answer.confidence,
+          publishers: answer.publishers,
+          evidenceChecked: answer.evidenceChecked,
+          durationMs: answer.durationMs,
+          model: answer.model ?? "",
+          flags: answer.flags,
+          createdAt: answer.createdAt,
+          ipHash: input.ipHash ?? "",
+          partial: true,
+        });
+        recorded = (await ref.get()).exists;
+      } catch (inner) {
+        console.error("[public-check] the desk did not receive this answer", inner);
+      }
     }
   } else {
     console.warn("[public-check] no database configured — answer not recorded for the desk");
