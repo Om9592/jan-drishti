@@ -270,7 +270,8 @@ export async function runChatTurn(input: {
       }),
     ],
     input.onDelta,
-    { maxTokens: 900, timeoutMs: 45_000 },
+    // Groq first: its time to first token is short, and the reader is watching.
+    { maxTokens: 800, timeoutMs: 45_000, prefer: "groq" },
   );
 
   // Models sometimes emit full-width citations (【1】) or parentheses; the reader

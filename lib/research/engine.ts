@@ -404,7 +404,7 @@ export async function runResearch(input: ResearchInput): Promise<ResearchResult>
           },
           { role: "user", content: input.claimText.slice(0, 500) },
         ],
-        { temperature: 0, maxTokens: 120, timeoutMs: 20_000 },
+        { temperature: 0, maxTokens: 120, timeoutMs: 8_000 },
       );
       const english = (translated?.text ?? "")
         .split("\n")
@@ -681,7 +681,9 @@ export async function runResearch(input: ResearchInput): Promise<ResearchResult>
     ].join(" ");
 
     let fanout: Awaited<ReturnType<typeof aiFanout>> = [];
-    const analystBudget = Math.min(90_000, remaining());
+    // Retrieval and translation have already spent part of the budget; the model
+    // pass gets the rest, capped so a single slow provider cannot own it.
+    const analystBudget = Math.min(90_000, remaining(), 35_000);
     if (analystBudget < 15_000) {
       aiNotice = "the model pass was skipped to keep the wait short";
       console.warn("[research] no time left for analysts:", analystBudget, "ms");
@@ -783,7 +785,7 @@ export async function runResearch(input: ResearchInput): Promise<ResearchResult>
       let reCheck = "not run — only one analyst answered";
 
       const reCheckBudget = remaining();
-      if (assessments.length >= 2 && reCheckBudget < 18_000) {
+      if (assessments.length >= 2 && reCheckBudget < 12_000) {
         reCheck = `re-check skipped — out of time budget (${Math.round(reCheckBudget / 1000)}s left); ${assessments.length} analyst(s) only`;
         console.warn("[research]", reCheck);
       } else if (assessments.length >= 2) {
