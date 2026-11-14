@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { Bot, ShieldAlert, TriangleAlert } from "lucide-react";
 import { listPublicChecks } from "@/lib/services/public-checks";
+import { getViewer } from "@/lib/security/auth";
 import { VERDICT_META, formatDateTime } from "@/lib/utils";
 import { EmptyState } from "@/components/ui/EmptyState";
 import type { Verdict } from "@/lib/types";
@@ -21,6 +22,13 @@ export const dynamic = "force-dynamic";
  * said, on what evidence, and where the cross-check disagreed.
  */
 export default async function AiChecksPage() {
+  // The layout renders the "no access" panel, but a layout and a page render in
+  // parallel: without this guard the page body still runs, and its output is
+  // serialised into the stream even when it is not shown. Never fetch for a
+  // stranger — check the role first, then read.
+  const viewer = await getViewer();
+  if (!viewer || !["admin", "editor", "researcher"].includes(viewer.role)) return null;
+
   const checks = await listPublicChecks(100);
 
   const flagged = checks.filter((check) => check.flags.some((flag) => flag !== "unverified"));

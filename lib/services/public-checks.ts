@@ -45,6 +45,8 @@ export interface PublicAnswer {
   createdAt: string;
   /** True when the answer is machine output shown to a reader, not an editorial verdict. */
   machine: true;
+  /** False means the desk did not receive this answer — surfaced, never hidden. */
+  recorded?: boolean;
 }
 
 export interface PublicCheckRecord extends PublicAnswer {
@@ -169,12 +171,13 @@ export async function answerPublicCheck(input: {
   };
 
   const db = adminDb();
+  let recorded = false;
   if (db) {
     try {
-      await db
-        .collection(COLLECTIONS.publicChecks)
-        .doc(answer.id)
-        .set({ ...answer, ipHash: input.ipHash });
+      const ref = db.collection(COLLECTIONS.publicChecks).doc(answer.id);
+      await ref.set({ ...answer, ipHash: input.ipHash });
+      // Read it back: an answer the desk cannot see is a promise, not a record.
+      recorded = (await ref.get()).exists;
     } catch (error) {
       console.error("[public-check] failed to record the answer", error);
     }
@@ -182,7 +185,7 @@ export async function answerPublicCheck(input: {
     console.warn("[public-check] no database configured — answer not recorded for the desk");
   }
 
-  return answer;
+  return { ...answer, recorded };
 }
 
 export interface PublicCheckSummary {

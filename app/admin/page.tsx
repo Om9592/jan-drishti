@@ -2,11 +2,17 @@ import Link from "next/link";
 import { ArrowUpRight, Database, Search, Sparkles, FileText, ScanText } from "lucide-react";
 import { getStore } from "@/lib/store";
 import { listPublicChecks } from "@/lib/services/public-checks";
+import { getViewer } from "@/lib/security/auth";
 import { capabilities } from "@/lib/config";
 import { formatDateTime, timeAgo } from "@/lib/utils";
 import { VerdictBadge } from "@/components/ui/VerdictBadge";
 
 export default async function AdminOverviewPage() {
+  // Same reason as the AI-answer log: no desk data is read or serialised for a
+  // viewer without a desk role.
+  const viewer = await getViewer();
+  if (!viewer || !["admin", "editor", "researcher"].includes(viewer.role)) return null;
+
   const store = getStore();
   const [stats, factChecks, submissions, audit, articles, aiCheckList] = await Promise.all([
     store.getStats(),
