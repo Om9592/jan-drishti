@@ -382,3 +382,53 @@ export async function extractImageText(base64: string, mime: string): Promise<st
     return null;
   }
 }
+
+export interface ProviderProbe {
+  name: string;
+  label: string;
+  keyless: boolean;
+  ok: boolean;
+  ms: number;
+  model?: string;
+  error?: string;
+}
+
+/**
+ * Health check for the AI chain: asks every provider the same one-line question
+ * and reports who answered. Used by the admin desk to tell "the key is dead"
+ * apart from "the desk is out of quota" without running a whole research file.
+ */
+export async function probeProviders(only?: string, timeoutMs = 25_000): Promise<ProviderProbe[]> {
+  const chain = config.ai.chain.filter((endpoint) => !only || endpoint.name === only);
+  const probes: ProviderProbe[] = [];
+  for (const endpoint of chain) {
+    const startedAt = Date.now();
+    try {
+      const answer = await aiRequest(
+        endpoint,
+        [{ role: "user", content: 'Answer with exactly this JSON and nothing else: {"ok":true}' }],
+        { json: true, temperature: 0, maxTokens: 40, retryOnTruncation: false },
+        timeoutMs,
+      );
+      probes.push({
+        name: endpoint.name,
+        label: endpoint.label,
+        keyless: endpoint.keyless,
+        ok: Boolean(answer),
+        ms: Date.now() - startedAt,
+        model: answer?.model,
+        error: answer ? undefined : "no answer",
+      });
+    } catch (error) {
+      probes.push({
+        name: endpoint.name,
+        label: endpoint.label,
+        keyless: endpoint.keyless,
+        ok: false,
+        ms: Date.now() - startedAt,
+        error: (error as Error).message,
+      });
+    }
+  }
+  return probes;
+}
