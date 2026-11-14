@@ -471,26 +471,41 @@ export async function runResearch(input: ResearchInput): Promise<ResearchResult>
 
   if (isAiConfigured() && evidence.length > 0) {
     /**
-     * Free tiers meter tokens per minute (Groq allows 8k), and a 26-item dump
-     * blows through that. The analysts get the strongest dozen items with tight
-     * snippets — enough to judge, small enough to answer.
+     * Free tiers meter tokens per minute (Groq allows 7-8k), and a 26-item dump
+     * blows through that. The analysts get the strongest items with tight
+     * snippets — enough to judge, small enough to answer — plus an even tighter
+     * rendering for providers that still say "request too large".
      */
-    const promptEvidence = evidence
+    const ranked = evidence
       .slice()
       .sort((a, b) => {
         const rank = (item: Evidence) =>
-          item.sourceType === "primary_record" ? 0 : item.sourceType === "government" ? 1 : item.sourceType === "independent_journalism" ? 2 : 3;
+          item.sourceType === "primary_record"
+            ? 0
+            : item.sourceType === "government"
+              ? 1
+              : item.sourceType === "independent_journalism"
+                ? 2
+                : 3;
         return rank(a) - rank(b);
-      })
-      .slice(0, 12);
-    const evidenceBlock = `CLAIM:\n${input.claimText}\n\nEXTRACTED CLAIMS:\n${claims
-      .map((c, i) => `${i + 1}. ${c.text}`)
-      .join("\n")}\n\nINDEPENDENT PUBLISHERS (${independent.length}): ${independent.join(", ") || "none"}\nPRIMARY RECORDS: ${primaryCount}\n\nRETRIEVED EVIDENCE (${promptEvidence.length} of ${evidence.length} items):\n${promptEvidence
-      .map(
-        (e, i) =>
-          `[${i + 1}] ${e.title.slice(0, 180)}\nURL: ${e.url}\nType: ${e.sourceType}\nSnippet: ${(e.quote ?? "").slice(0, 320)}`,
-      )
-      .join("\n\n")}`;
+      });
+
+    const renderEvidence = (items: Evidence[], snippetChars: number) =>
+      items
+        .map(
+          (e, i) =>
+            `[${i + 1}] ${e.title.slice(0, 140)}\nURL: ${e.url}\nType: ${e.sourceType}\nSnippet: ${(e.quote ?? "").slice(0, snippetChars)}`,
+        )
+        .join("\n\n");
+
+    const promptEvidence = ranked.slice(0, 10);
+    const renderClaimBlock = (items: Evidence[], snippetChars: number) =>
+      `CLAIM:\n${input.claimText}\n\nEXTRACTED CLAIMS:\n${claims
+        .map((c, i) => `${i + 1}. ${c.text}`)
+        .join("\n")}\n\nINDEPENDENT PUBLISHERS (${independent.length}): ${independent.join(", ") || "none"}\nPRIMARY RECORDS: ${primaryCount}\n\nRETRIEVED EVIDENCE (${items.length} of ${evidence.length} items):\n${renderEvidence(items, snippetChars)}`;
+
+    const evidenceBlock = renderClaimBlock(promptEvidence, 300);
+    const compactBlock = renderClaimBlock(ranked.slice(0, 6), 180);
 
     const RULES = [
       "You are assisting a human fact-checking editor in India. You are given numbered search results only — you may not use any other knowledge and may not invent sources.",
@@ -522,7 +537,17 @@ export async function runResearch(input: ResearchInput): Promise<ResearchResult>
           { role: "system", content: analystSystem },
           { role: "user", content: evidenceBlock },
         ],
-        { json: true, temperature: 0.1, maxTokens: 1600, timeoutMs: 90_000 },
+        {
+          json: true,
+          temperature: 0.1,
+          maxTokens: 1800,
+          timeoutMs: 90_000,
+          onTokenLimit: [
+            { role: "system", content: analystSystem },
+            { role: "user", content: compactBlock },
+          ],
+          onTokenLimitMaxTokens: 900,
+        },
       );
     } catch (error) {
       aiNotice = (error as Error).message;
@@ -623,14 +648,28 @@ export async function runResearch(input: ResearchInput): Promise<ResearchResult>
           const recheck = await aiComplete(
             [
               { role: "system", content: adjudicatorSystem },
-              { role: "user", content: `${evidenceBlock}\n\nINDEPENDENT ANALYST ANSWERS (${assessments.length}):\n${analystBlock}` },
+              {
+                role: "user",
+                content: `${evidenceBlock}\n\nINDEPENDENT ANALYST ANSWERS (${assessments.length}):\n${analystBlock}`,
+              },
             ],
             {
               json: true,
               temperature: 0,
-              maxTokens: 1800,
+              maxTokens: 2000,
               timeoutMs: 120_000,
-              prefer: adjudicator,
+              prefer: adjudicator || undefined,
+              preferModel: config.ai.adjudicatorModel || undefined,
+              onTokenLimit: [
+                { role: "system", content: adjudicatorSystem },
+                {
+                  role: "user",
+                  content: `${compactBlock}\n\nANALYST ANSWERS (brief):\n${assessments
+                    .map((assessment) => `${assessment.provider}: ${assessment.preliminaryVerdict} — ${assessment.missingContextEn.slice(0, 120)}`)
+                    .join("\n")}`,
+                },
+              ],
+              onTokenLimitMaxTokens: 1000,
             },
           );
           if (recheck) {

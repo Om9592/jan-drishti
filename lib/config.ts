@@ -130,7 +130,7 @@ function keyForPreset(name: PresetName): string | undefined {
  */
 function buildAnalystEndpoints(chain: AiEndpoint[]): AiEndpoint[] {
   const endpoints = chain.filter((endpoint) => !endpoint.keyless).map((endpoint) => ({ ...endpoint }));
-  const specs = (env("AI_ANALYST_MODELS") ?? "groq:qwen/qwen3.8-27b")
+  const specs = (env("AI_ANALYST_MODELS") ?? "groq:openai/gpt-oss-20b")
     .split(",")
     .map((spec) => spec.trim())
     .filter(Boolean);
@@ -194,7 +194,12 @@ export const config = {
      * first token. That is fine for prose and fatal for a JSON pipeline that has
      * a request deadline, so structured calls ask for the smallest effort.
      */
-    reasoningEffort: env("AI_REASONING_EFFORT") ?? "minimal",
+    /**
+     * "low" is the only scale every provider agrees on: Groq's open-weights
+     * servers reject "minimal" outright, and a rejected parameter costs a whole
+     * request against a per-minute token budget.
+     */
+    reasoningEffort: env("AI_REASONING_EFFORT") ?? "low",
     /**
      * A research run needs one model call to write the verdict. Spending a
      * second call on claim extraction is a luxury: keyless retrieval already
@@ -208,8 +213,13 @@ export const config = {
      * verification.
      */
     analysts: Math.max(2, Number(env("AI_ANALYSTS") ?? 2)),
-    /** Provider that re-checks the analysts. Groq is fast and free; else primary. */
+    /** Provider that re-checks the analysts. Empty = best in the chain. */
     adjudicator: env("AI_ADJUDICATOR") ?? "",
+    /**
+     * Model for that re-check. Pin it to a model no analyst used and the check
+     * is a third opinion rather than the same voice twice.
+     */
+    adjudicatorModel: env("AI_ADJUDICATOR_MODEL") ?? "",
   },
   search: {
     tavilyKey: env("TAVILY_API_KEY"),

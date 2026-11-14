@@ -55,6 +55,15 @@ interface AiOptions {
   retryOnTruncation?: boolean;
   /** Try this provider first (used to hand the re-check to a specific model). */
   prefer?: string;
+  /** Model to use only on the preferred provider — providers name models differently. */
+  preferModel?: string;
+  /**
+   * Smaller version of the same conversation. Free tiers meter tokens per
+   * minute, so a provider that answers "request too large" gets a second, tighter
+   * try rather than being dropped.
+   */
+  onTokenLimit?: AiMessage[];
+  onTokenLimitMaxTokens?: number;
 }
 
 export interface AiAnswer {
@@ -70,6 +79,8 @@ export class AiError extends Error {
     readonly status?: number,
     /** Milliseconds the provider asked us to wait before trying again. */
     readonly retryAfterMs?: number,
+    /** True when the request was too big for this model's token meter. */
+    readonly tokenLimit?: boolean,
   ) {
     super(message);
     this.name = "AiError";
@@ -112,8 +123,10 @@ export async function aiComplete(messages: AiMessage[], options?: AiOptions): Pr
         ? remaining
         : Math.min(remaining, index === 0 ? Math.max(20_000, Math.round(remaining * 0.75)) : 45_000);
 
+    const endpointOptions =
+      endpoint.name === options?.prefer && options?.preferModel ? { ...options, model: options.preferModel } : options;
     try {
-      const answer = await attempt(endpoint, messages, options, Math.min(slice, remaining));
+      const answer = await attempt(endpoint, messages, endpointOptions, Math.min(slice, remaining));
       if (answer) return answer;
       failures.push(`${endpoint.label}: no answer`);
     } catch (error) {
@@ -126,7 +139,7 @@ export async function aiComplete(messages: AiMessage[], options?: AiOptions): Pr
           console.warn(`[ai] ${endpoint.name} is rate limited, waiting ${Math.round(failure.retryAfterMs / 1000)}s`);
           await new Promise((resolve) => setTimeout(resolve, failure.retryAfterMs));
           try {
-            const answer = await attempt(endpoint, messages, options, Math.min(45_000, deadline - Date.now()));
+            const answer = await attempt(endpoint, messages, endpointOptions, Math.min(45_000, deadline - Date.now()));
             if (answer) return answer;
           } catch (retryError) {
             failures.push(`${endpoint.label}: ${(retryError as Error).message}`);
@@ -146,7 +159,23 @@ async function attempt(
   options: AiOptions | undefined,
   timeoutMs: number,
 ): Promise<AiAnswer | null> {
-  const first = await aiRequest(endpoint, messages, options, timeoutMs);
+  let first: AiAnswer | null;
+  try {
+    first = await aiRequest(endpoint, messages, options, timeoutMs);
+  } catch (error) {
+    if (!(error instanceof AiError) || !error.tokenLimit || !options?.onTokenLimit) throw error;
+    console.warn(`[ai] ${endpoint.name} over its token budget, retrying with a tighter prompt`);
+    return aiRequest(
+      endpoint,
+      options.onTokenLimit,
+      {
+        ...options,
+        maxTokens: options.onTokenLimitMaxTokens ?? Math.max(600, Math.round((options.maxTokens ?? 1600) / 2)),
+        retryOnTruncation: false,
+      },
+      timeoutMs,
+    );
+  }
   if (!first) return null;
   if (first.finishReason !== "length" && !looksTruncated(first.text)) return first;
   if (options?.retryOnTruncation === false) return first;
@@ -188,14 +217,14 @@ async function aiRequest(
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (endpoint.apiKey) headers.Authorization = `Bearer ${endpoint.apiKey}`;
   try {
-    const payload = (effort: string | null | undefined) =>
+    const payload = (effort: string | null | undefined, jsonMode: boolean = Boolean(options?.json)) =>
       JSON.stringify({
         model,
         messages,
         temperature: options?.temperature ?? 0.1,
         max_tokens: options?.maxTokens ?? 1800,
         ...(effort ? { reasoning_effort: effort } : {}),
-        ...(options?.json ? { response_format: { type: "json_object" } } : {}),
+        ...(jsonMode ? { response_format: { type: "json_object" } } : {}),
       });
     const send = (effort: string | null | undefined = reasoningEffort) =>
       fetch(`${endpoint.baseUrl}/chat/completions`, {
@@ -237,10 +266,26 @@ async function aiRequest(
       if (response.status === 401 || response.status === 403) {
         throw new AiError("The provider rejected the API key.", response.status);
       }
-      if (response.status === 413) {
+      if (response.status === 400) {
+      const probe = await response.clone().text().catch(() => "");
+      // Groq's JSON mode fails the whole request when the model runs out of
+      // completion budget before closing the object. Asking in prose works.
+      if (/json_validate_failed|Failed to generate JSON/i.test(probe)) {
+        console.warn(`[ai] ${endpoint.name} could not satisfy JSON mode, retrying in prose`);
+        response = await fetch(`${endpoint.baseUrl}/chat/completions`, {
+          method: "POST",
+          headers,
+          body: payload(reasoningEffort, false),
+          signal: controller.signal,
+        });
+      }
+    }
+    if (response.status === 413 || (response.status === 429 && /\btokens? per minute|ITPM|TPM\b/i.test(body) && /request/i.test(body))) {
         throw new AiError(
-          "The request is larger than this model's per-minute token limit (free tiers are small). Shorter evidence or a bigger tier fixes it.",
-          413,
+          "The request is larger than this model's per-minute token budget (free tiers are small).",
+          response.status,
+          undefined,
+          true,
         );
       }
       if (response.status === 402 || response.status === 429) {
