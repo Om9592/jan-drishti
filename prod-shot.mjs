@@ -1,0 +1,11 @@
+import { chromium } from "playwright";
+const browser = await chromium.launch();
+const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+await page.goto("https://jan-drishti-navy.vercel.app/ask", { waitUntil: "networkidle" });
+await page.screenshot({ path: "/home/user/jan-drishti/shot-prod-ask.png" });
+const nav = await page.locator("nav[aria-label='Sections']").innerText();
+console.log("NAV:", nav.replace(/\n+/g, " | "));
+await page.goto("https://jan-drishti-navy.vercel.app/latest", { waitUntil: "networkidle" });
+const t = await page.innerText("main").catch(() => page.innerText("body"));
+console.log("LATEST:", t.slice(0, 240).replace(/\n+/g, " | "));
+await browser.close();

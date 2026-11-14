@@ -149,7 +149,7 @@ export function Header({ categories, latestHeadline, viewer }: HeaderProps) {
             </Link>
             <Link
               href="/ask"
-              className="hidden items-center gap-1.5 border border-gold-dark bg-gold/[0.12] px-3 py-2 font-sans text-[0.65rem] uppercase tracking-[0.12em] text-gold-dark transition-colors hover:bg-gold-dark hover:text-paper sm:inline-flex"
+              className="hidden items-center gap-1.5 whitespace-nowrap border border-gold-dark bg-gold/[0.12] px-3 py-2 font-sans text-[0.65rem] uppercase tracking-[0.12em] text-gold-dark transition-colors hover:bg-gold-dark hover:text-paper sm:inline-flex"
             >
               <Sparkles className="h-3 w-3" aria-hidden="true" />
               {t("nav.ask")}

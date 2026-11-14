@@ -237,7 +237,7 @@ export function ChatInterface() {
   };
 
   return (
-    <div className="flex h-[calc(100dvh-15rem)] min-h-[560px] flex-col border border-rule bg-paper">
+    <div className="flex h-[calc(100dvh-19rem)] min-h-[480px] flex-col border border-rule bg-paper">
       <div className="flex items-center justify-between gap-2 border-b border-rule bg-white px-4 py-2.5">
         <div className="flex items-center gap-2">
           <Bot className="h-4 w-4 text-gold-dark" aria-hidden="true" />
