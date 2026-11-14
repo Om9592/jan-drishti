@@ -284,3 +284,24 @@ step would be claim-aware query variants and per-claim source targeting.
 - `tests/integration.test.mjs` — the assertions behind the ✅ marks above.
 - `lib/research/engine.ts` — the fact-check pipeline and its honesty rules.
 - `lib/store/` — the `DataStore` seam between Firestore and the labelled sample store.
+
+### Phase G — verify against the latest news, and show the sources
+
+The reader's complaint was that every answer said `unverified`, even for a story
+every outlet was carrying, and that nothing pointed at the reporting.
+
+- Google News is searched inside a 7-day window first; Bing is sorted by date;
+  hits are deduped and ordered newest-first. A second, un-windowed pass runs when
+  the fresh window cannot settle the claim, so an old rumour is still settled by
+  the fact-checks written about it.
+- Evidence is ranked by specificity: the named organisation is the floor, not the
+  answer, so an RBI story about a wallet licence is not evidence about ₹500 notes.
+- Analysts receive today's date, the age of the newest source and how many items
+  come from the last week, and are told to be decisive when several publishers
+  report the same event.
+- No keyed model answering no longer produces a fake negative finding. The reply
+  says the models were unavailable and cites the freshest headlines; the verdict
+  chip reads "No verdict yet" instead of "unverified".
+- Every source carries its publication date, and the answer ends in a sources box
+  (count, publishers, "Newest: 2h ago · 23 this week") with an explicit warning
+  when nothing was retrieved.

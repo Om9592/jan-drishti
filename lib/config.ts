@@ -242,11 +242,13 @@ export const config = {
     /** Public self-serve AI checks per connection per hour. */
     publicCheckRateLimit: Number(env("PUBLIC_CHECK_RATE_LIMIT") ?? 6),
     /**
-     * How long the chat checker may spend on models before it answers with what
-     * it has. Free tiers rate limit hard, and a reader will not wait three
-     * retries; the answer states what was skipped instead.
+     * How long the chat checker may spend before it answers with what it has.
+     * Free tiers rate limit hard and the keyless model is slow, so the budget
+     * has to be long enough for a second or third provider to answer — the
+     * route is allowed 300 s on this plan, and the reply states what was
+     * skipped rather than pretending it was checked.
      */
-    chatBudgetMs: Number(env("CHAT_BUDGET_MS") ?? 55_000),
+    chatBudgetMs: Number(env("CHAT_BUDGET_MS") ?? 110_000),
   },
 } as const;
 
