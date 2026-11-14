@@ -3,6 +3,52 @@
 Written 13 November 2026. Everything below was verified in this workspace; nothing is
 asserted that was not executed. Where something could not be done, it says so plainly.
 
+## Phase F — the checker becomes a chat (13 Nov 2026)
+
+A reader can now hold a conversation with the checker: type a claim in English,
+Hindi or Hinglish, watch the stages, and read the answer as it is written, with
+numbered citations that jump to the source.
+
+| Check | Result |
+| --- | --- |
+| Chat page | `/ask` — bubbles, staged progress, streaming tokens, stop button, new chat, session-persisted history, mobile safe |
+| Streaming | server-sent events: `open` → `status` ×3 → `delta` ×N → `done`, with 8 s heartbeats so no proxy drops a long run |
+| A false viral claim | "RBI has stopped printing ₹500 notes" → **false**, 15 publishers, sources include FACTLY, CyberPeace fact-check, Outlook Money, Economic Times |
+| A true viral claim | "Yamuna mein zehrile jhaag wapas" → **verified_true**, 5 independent publishers (NDTV, TOI, HT, Newslaundry, TNIE), answered in Hindi |
+| Hinglish in, Hinglish out | the reply follows the language of the question, not the interface |
+| Every answer logged | written to `publicChecks` with `kind: "chat"`, visible on `/admin/ai-checks` as a chat turn |
+
+### Three bugs this phase found, and the fix
+
+1. **Retrieval was fetching the wrong story.** "Is it true that the RBI has
+   withdrawn ₹500 notes?" produced the queries `"true withdrawn"` — question words
+   became search terms — and the evidence came back as stories about US bombers
+   and church attendance, which the models then reasoned about in perfect
+   confidence. Fixes: question/filler words (English, Hindi and Hinglish) are now
+   stopwords; acronyms are recognised as entities; queries are built from the
+   subject plus its figures. The same claim now returns FACTLY, Outlook Money and
+   the government's rebuttal.
+2. **Every three-letter acronym was being thrown away.** The entity filter kept
+   words longer than three characters — so RBI, CBI, WHO and NIA never counted,
+   and the relevance gate had nothing to match on.
+3. **Off-topic results were treated as evidence.** A hit now has to share the
+   claim's named subject (or, for claims with no named subject, two content words
+   or a figure). Stories about 3D printers no longer reach the models.
+
+### Reliability engineering added here
+
+- **A wall-clock budget** (`CHAT_BUDGET_MS`, default 55 s). Free tiers rate limit
+  hard; the run used to take 193 s because each provider was retried after a 429.
+  Retry sleeps are now skipped past the deadline, and the answer says what it
+  skipped ("re-check skipped — out of time budget") instead of pretending.
+- **Real streaming** (`aiStream`): the answer types itself out token by token, and
+  a provider only counts as having answered once its first token arrives, so
+  failover still works.
+- **Self-verifying writes**: the record is read back from Firestore, and the UI
+  says so if the desk did not receive it.
+- If every model fails, the reader still gets an answer assembled from the
+  retrieved evidence, flagged `assembled-reply` — never a fabricated verdict.
+
 ## Phase E — instant self-serve answers, reporting-only desk (13 Nov 2026)
 
 A reader asks, the machine answers, and the desk gets a record. There is no approval

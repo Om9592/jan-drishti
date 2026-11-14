@@ -18,6 +18,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     "/health",
     "/states",
     "/ground-reports",
+    "/ask",
     "/fact-check",
     "/submit",
     "/contribute",

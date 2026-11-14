@@ -43,7 +43,7 @@ const STEPS: Omit<ResearchStep, "status">[] = [
   { key: "draft", labelEn: "Draft preliminary report", labelHi: "प्रारंभिक रिपोर्ट तैयार करें" },
 ];
 
-const ENTITY_RE = /\b([A-Z][a-z]{2,}(?:\s+[A-Z][a-z]{2,}){0,3})\b/g;
+const ENTITY_RE = /\b([A-Z][a-z]{2,}(?:\s+[A-Z][a-z]{2,}){0,3}|[A-Z]{2,6})\b/g;
 
 const NUMBER_WORDS = new Set(
   (
@@ -54,11 +54,21 @@ const NUMBER_WORDS = new Set(
     .filter(Boolean),
 );
 
+/**
+ * Question words and hedging are the single biggest retrieval trap: "Is it true
+ * that the RBI has withdrawn 500-rupee notes?" used to produce the queries
+ * "true withdrawn" and fetched stories about US bombers and church attendance.
+ * A claim is searched by its subjects and figures, so filler is dropped here.
+ */
 const STOPWORDS = new Set(
   ("a an and are as at be been being by for from had has have he her his i in into is it its of on or our " +
     "said says she that the their them there these they this those to was were what when where which who why " +
     "will with would you your more than over under after before during also just only very much many some " +
-    "news claim viral video viral post reportedly report reports according source sources")
+    "news claim claims claimed viral video videos post reportedly report reports according source sources " +
+    "true false real fake hoax rumour rumor fact check checking ask question tell know think really actually " +
+    "please sir madam yes no not dont doesn didn cant cannot could should must may might shall " +
+    "kya hai hain ki ka ke ko mein me se par aur bhi nahi nahin sach sachi jhooth khabar bataye batao " +
+    "yeh ye woh wo iska usko ise use kuch koi logon log")
     .split(" ")
     .filter(Boolean),
 );
@@ -99,7 +109,9 @@ function fallbackQueries(claimText: string): { claims: ResearchReport["extracted
   const entities = Array.from(
     new Set((claimText.match(ENTITY_RE) ?? []).map((word) => word.replace(/^(The|A|An)\s+/, ""))),
   )
-    .filter((word) => word.length > 3)
+    // Three letters is the whole point: RBI, CBI, WHO, NIA, ED. The old >3 rule
+    // threw away every acronym and left the gate blind.
+    .filter((word) => word.length >= 3 || word.length === 0)
     .filter((word) => {
       const lower = word.toLowerCase();
       return !STOPWORDS.has(lower) && !NUMBER_WORDS.has(lower) && !NUMBER_WORDS.has(lower.split(" ")[0]);
@@ -112,17 +124,25 @@ function fallbackQueries(claimText: string): { claims: ResearchReport["extracted
     .split(/\s+/)
     .map((w) => w.trim())
     .filter((w) => w.length > 3 && !STOPWORDS.has(w.toLowerCase()) && !NUMBER_WORDS.has(w.toLowerCase()));
-  const distinctive = contentWords.filter((w) => !entities.some((e) => e.includes(w))).slice(0, 6);
+  const distinctive = Array.from(new Set(contentWords.filter((w) => !entities.some((e) => e.includes(w))))).slice(
+    0,
+    6,
+  );
   const keywords = keywordsOf(claimText) || contentWords.slice(0, 5).join(" ");
 
+  // Figures anchor a claim: "500" with "rupee" finds the note story, while the
+  // same words without it find every story about money.
+  const numbers = Array.from(new Set((claimText.match(/\b\d{2,6}\b/g) ?? []).slice(0, 3)));
+
   const queries: string[] = [];
-  if (entities.length >= 2) queries.push(`${entities[0]} ${entities[1]}`);
-  if (entities.length >= 1 && distinctive.length >= 1) queries.push(`${entities[0]} ${distinctive[0]}`);
-  // A quoted phrase from the claim finds the exact story rather than any page
-  // that shares two common words.
+  const anchor = entities[0] ?? "";
+  if (anchor && numbers.length > 0) queries.push(`${anchor} ${numbers[0]}`);
+  if (anchor && distinctive.length >= 2) queries.push(`${anchor} ${distinctive[0]} ${distinctive[1]}`);
+  if (anchor && distinctive.length >= 1) queries.push(`${anchor} ${distinctive[0]}`);
   if (distinctive.length >= 2) queries.push(`"${distinctive[0]} ${distinctive[1]}"`);
-  if (distinctive.length >= 2) queries.push(`${distinctive[0]} ${distinctive[1]}`);
-  if (entities.length >= 1) queries.push(`${entities[0]} fact check`);
+  if (distinctive.length >= 3) queries.push(`${distinctive[0]} ${distinctive[1]} ${distinctive[2]}`);
+  if (entities.length >= 2) queries.push(`${entities[0]} ${entities[1]}`);
+  if (anchor) queries.push(`${anchor} fact check`);
   if (queries.length === 0) queries.push(keywords);
   queries.push(keywords);
 
@@ -240,6 +260,15 @@ export interface ResearchInput {
   language: Language;
   submissionId?: string | null;
   url?: string | null;
+  /**
+   * Wall-clock ceiling for the assessment stage. A reader waiting in a chat
+   * window cannot sit through three free-tier rate-limit retries, so when the
+   * budget runs out the run records exactly what it skipped and why, rather
+   * than dropping the answer or pretending the check was complete.
+   */
+  budgetMs?: number;
+  /** Strongest N evidence items to put in front of the models. */
+  evidenceLimit?: number;
 }
 
 export interface ResearchResult {
@@ -268,6 +297,8 @@ function emptyReport(claimId: string, steps: ResearchStep[]): ResearchReport {
 }
 
 export async function runResearch(input: ResearchInput): Promise<ResearchResult> {
+  const deadline = input.budgetMs ? Date.now() + input.budgetMs : Number.POSITIVE_INFINITY;
+  const remaining = () => deadline - Date.now();
   const steps: ResearchStep[] = STEPS.map((s) => ({ ...s, status: "pending" as const }));
   const setStep = (key: string, status: ResearchStep["status"], detail?: string) => {
     const step = steps.find((s) => s.key === key);
@@ -352,6 +383,43 @@ export async function runResearch(input: ResearchInput): Promise<ResearchResult>
     setStep("queries", "done", "Queries generated from claim text.");
   }
 
+  /**
+   * A claim typed in Hindi or Hinglish cannot be searched: Google News and Bing
+   * match English keywords, so "Yamuna zehrile jhaag" returns nothing while
+   * "Yamuna toxic foam" returns the story. One tiny call turns the claim into
+   * English search terms; if it fails, the deterministic queries still run.
+   */
+  const devanagari = /[\u0900-\u097F]/.test(input.claimText);
+  const hinglish = /\b(kya|hai|hain|nahi|nahin|mein|sach|jhooth|ka|ki|ke|ko|bataye|batao|khabar)\b/i.test(
+    input.claimText,
+  );
+  if (isAiConfigured() && (devanagari || hinglish)) {
+    try {
+      const translated = await aiComplete(
+        [
+          {
+            role: "system",
+            content:
+              "Translate the claim into English search queries for a news index. Reply with up to 3 queries, one per line, each 2-6 words, no numbering, no quotes, no commentary.",
+          },
+          { role: "user", content: input.claimText.slice(0, 500) },
+        ],
+        { temperature: 0, maxTokens: 120, timeoutMs: 20_000 },
+      );
+      const english = (translated?.text ?? "")
+        .split("\n")
+        .map((line) => line.replace(/^[-*\d.\s]+/, "").trim())
+        .filter((line) => line.length >= 6 && /[a-z]/i.test(line))
+        .slice(0, 3);
+      if (english.length > 0) {
+        queries = [...english, ...queries].slice(0, 6);
+        console.log("[research] translated queries for retrieval:", english.join(" | "));
+      }
+    } catch (error) {
+      console.warn("[research] could not translate the claim for search", (error as Error).message);
+    }
+  }
+
   // ---------------------------------------------------------------- 2. search
   //
   // Evidence gathering always runs. Paid search keys are used when present,
@@ -421,11 +489,92 @@ export async function runResearch(input: ResearchInput): Promise<ResearchResult>
     }
   }
 
+  // ------------------------------------------------------- 2a. relevance gate
+  // News indexes happily return a fresh story about something else entirely, and
+  // the models will faithfully judge that junk. A hit is kept only if its title
+  // or snippet shares a real token with the claim — an entity, a figure, or a
+  // subject word. Official records and primary documents always survive: they
+  // are the ones that can settle a claim even with sparse wording.
+  const claimTokens = new Set(
+    [
+      ...(input.claimText.toLowerCase().match(/[\p{L}\p{N}]{3,}/gu) ?? []),
+      ...((input.claimText.match(/\b\d{2,6}\b/g) ?? []).map((n) => n.toLowerCase())),
+    ].filter((token) => !STOPWORDS.has(token)),
+  );
+  const claimNumbers = new Set(input.claimText.match(/\b\d{2,6}\b/g) ?? []);
+  const claimEntities = entities
+    .map((entity) => entity.toLowerCase())
+    .filter((entity) => entity.length >= 3 || /^[a-z]{2,6}$/.test(entity));
+
+  const matchDetail = (hit: { title: string; snippet: string; url: string }) => {
+    const text = `${hit.title} ${hit.snippet}`.toLowerCase();
+    const matched = new Set<string>();
+    for (const token of claimTokens) {
+      if (text.includes(token)) matched.add(token);
+    }
+    const entityMatch = claimEntities.some((entity) => text.includes(entity));
+    const numberMatch = Array.from(claimNumbers).some((number) => text.includes(number));
+    return { matched: [...matched], entityMatch, numberMatch };
+  };
+
+  /**
+   * One shared word is not a match. "Printing" appears in the RBI claim and in a
+   * story about 3D printers; keeping that story makes the models reason about
+   * the wrong subject with full confidence. A hit has to share the claim's
+   * subject (an entity), one of its figures, or at least two of its content
+   * words before it is treated as evidence about this claim.
+   */
+  const offTopic: string[] = [];
+  const relevant = hits.filter((hit) => {
+    const type = hit.sourceType ?? classifySource(hit.url);
+    if (["government", "primary_record"].includes(type)) return true;
+    const { matched, entityMatch, numberMatch } = matchDetail(hit);
+    // When the claim names a subject — RBI, Yamuna, a person — a document that
+    // never mentions it is not evidence about it, however many generic words it
+    // shares. Without a named subject, two shared content words is the bar.
+    if (claimEntities.length > 0) {
+      // A figure alone is not a match: "500" appears in a story about a $500
+      // printer. The named subject has to be in the document.
+      if (entityMatch) return true;
+    } else if (numberMatch || matched.length >= 2) {
+      return true;
+    }
+    offTopic.push(hit.title.slice(0, 80));
+    return false;
+  });
+  // Dropping everything would be its own kind of lie; keep the top-scoring hits
+  // and let the report say the match was weak.
+  if (relevant.length < 4) {
+    // Rescue only what shares the claim's own subject. A short honest evidence
+    // set beats a long one padded with stories about 3D printers.
+    const rescued = hits
+      .map((hit) => {
+        const detail = matchDetail(hit);
+        return {
+          hit,
+          score: detail.matched.length + (detail.entityMatch ? 4 : 0) + (detail.numberMatch ? 4 : 0),
+          specific: claimEntities.length > 0 ? detail.entityMatch : true,
+        };
+      })
+      .filter((entry) => entry.score > 0 && entry.specific)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 4)
+      .map((entry) => entry.hit);
+    for (const hit of rescued) {
+      if (!relevant.includes(hit)) relevant.push(hit);
+    }
+  }
+  if (offTopic.length > 0) {
+    console.warn(`[research] dropped ${offTopic.length} off-topic result(s):`, offTopic.slice(0, 3).join(" | "));
+    hits.length = 0;
+    hits.push(...relevant);
+  }
+
   const publishers = independentPublishers(hits);
   setStep(
     "search",
     "done",
-    `${hits.length} unique result(s) from ${publishers.length} publisher(s) via ${Array.from(sourcesUsed)
+    `${hits.length} relevant result(s) from ${publishers.length} publisher(s) via ${Array.from(sourcesUsed)
       .map((name) => name.replace(/-/g, " "))
       .join(", ")}.`,
   );
@@ -498,7 +647,7 @@ export async function runResearch(input: ResearchInput): Promise<ResearchResult>
         )
         .join("\n\n");
 
-    const promptEvidence = ranked.slice(0, 10);
+    const promptEvidence = ranked.slice(0, Math.max(4, Math.min(10, input.evidenceLimit ?? 10)));
     const renderClaimBlock = (items: Evidence[], snippetChars: number) =>
       `CLAIM:\n${input.claimText}\n\nEXTRACTED CLAIMS:\n${claims
         .map((c, i) => `${i + 1}. ${c.text}`)
@@ -513,6 +662,7 @@ export async function runResearch(input: ResearchInput): Promise<ResearchResult>
       "Recommend a preliminary verdict from: verified_true, false, misleading, unverified, outdated, disputed.",
       "If evidence is thin, indirect, or does not address the specific claim, choose unverified with low confidence.",
       "Corroboration rule: a verdict of verified_true or false requires at least three INDEPENDENT publishers agreeing, or one primary government/court record. If the evidence set has fewer, you must return unverified or disputed and say why.",
+      "If the documented event is real but the claim overstates it — a stretch of river described as the whole river, a local report described as a national order — return misleading and say exactly what is exaggerated, rather than unverified.",
       "Treat syndicated copies of one wire story as a single source, not several.",
     ];
     const SCHEMA =
@@ -531,7 +681,11 @@ export async function runResearch(input: ResearchInput): Promise<ResearchResult>
     ].join(" ");
 
     let fanout: Awaited<ReturnType<typeof aiFanout>> = [];
-    try {
+    const analystBudget = Math.min(90_000, remaining());
+    if (analystBudget < 15_000) {
+      aiNotice = "the model pass was skipped to keep the wait short";
+      console.warn("[research] no time left for analysts:", analystBudget, "ms");
+    } else try {
       fanout = await aiFanout(
         [
           { role: "system", content: analystSystem },
@@ -541,7 +695,8 @@ export async function runResearch(input: ResearchInput): Promise<ResearchResult>
           json: true,
           temperature: 0.1,
           maxTokens: 1800,
-          timeoutMs: 90_000,
+          timeoutMs: analystBudget,
+          deadline: Number.isFinite(deadline) ? deadline : undefined,
           onTokenLimit: [
             { role: "system", content: analystSystem },
             { role: "user", content: compactBlock },
@@ -627,7 +782,11 @@ export async function runResearch(input: ResearchInput): Promise<ResearchResult>
       let modelLabel = `${assessments[0].model} · ${assessments[0].provider}`;
       let reCheck = "not run — only one analyst answered";
 
-      if (assessments.length >= 2) {
+      const reCheckBudget = remaining();
+      if (assessments.length >= 2 && reCheckBudget < 18_000) {
+        reCheck = `re-check skipped — out of time budget (${Math.round(reCheckBudget / 1000)}s left); ${assessments.length} analyst(s) only`;
+        console.warn("[research]", reCheck);
+      } else if (assessments.length >= 2) {
         const adjudicatorSystem = [
           ...RULES,
           "You are the re-checking analyst. Two or more independent models have assessed the SAME evidence set; their answers are below.",
@@ -687,7 +846,8 @@ export async function runResearch(input: ResearchInput): Promise<ResearchResult>
                 json: attemptOptions.json,
                 temperature: 0,
                 maxTokens: attemptOptions.maxTokens,
-                timeoutMs: 120_000,
+                timeoutMs: Math.min(120_000, Math.max(12_000, remaining())),
+                deadline: Number.isFinite(deadline) ? deadline : undefined,
                 prefer: adjudicator || undefined,
                 preferModel: config.ai.adjudicatorModel || undefined,
                 onTokenLimit: [

@@ -216,6 +216,8 @@ export async function answerPublicCheck(input: {
 export interface PublicCheckSummary {
   id: string;
   claim: string;
+  /** "chat" for a conversational turn, absent for a single-shot check. */
+  kind?: string;
   verdict: Verdict;
   confidence: string;
   publishers: number;
@@ -242,6 +244,7 @@ export async function listPublicChecks(limit = 100): Promise<PublicCheckSummary[
       return {
         id: doc.id,
         claim: data.claim,
+        kind: (data as PublicCheckRecord & { kind?: string }).kind,
         verdict: data.verdict,
         confidence: data.confidence,
         publishers: data.publishers ?? 0,

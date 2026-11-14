@@ -195,6 +195,26 @@ export function Header({ categories, latestHeadline, viewer }: HeaderProps) {
 
             <li className="shrink-0">
               <Link
+                href="/ask"
+                aria-current={isActive("/ask") ? "page" : undefined}
+                className={cn(
+                  "group relative flex h-11 items-center gap-1 px-2.5 font-sans text-[0.68rem] uppercase tracking-[0.11em] transition-colors lg:px-3",
+                  isActive("/ask") ? "text-gold-dark" : "text-gold-dark hover:text-navy",
+                )}
+              >
+                {t("nav.ask")}
+                <span
+                  className={cn(
+                    "absolute inset-x-2 bottom-0 h-[2px] bg-gold transition-transform duration-200 ease-editorial",
+                    isActive("/ask") ? "scale-x-100" : "scale-x-0 group-hover:scale-x-100",
+                  )}
+                  aria-hidden="true"
+                />
+              </Link>
+            </li>
+
+            <li className="shrink-0">
+              <Link
                 href="/fact-check"
                 aria-current={isActive("/fact-check") ? "page" : undefined}
                 className={cn(
@@ -283,10 +303,10 @@ export function Header({ categories, latestHeadline, viewer }: HeaderProps) {
             <Menu className="h-4 w-4" aria-hidden="true" /> {t("nav.menu")}
           </button>
           <Link
-            href="/fact-check"
+            href="/ask"
             className="font-sans text-[0.7rem] uppercase tracking-[0.12em] text-gold-dark"
           >
-            {t("nav.factCheck")}
+            {t("nav.ask")}
           </Link>
           <Link
             href="/submit"
@@ -319,6 +339,7 @@ export function Header({ categories, latestHeadline, viewer }: HeaderProps) {
                   { href: "/", label: t("nav.home") },
                   { href: "/latest", label: t("nav.latest") },
                   ...categories.map((c) => ({ href: `/${c.slug}`, label: c.label })),
+                  { href: "/ask", label: t("nav.ask") },
                   { href: "/fact-check", label: t("nav.factCheck") },
                   { href: "/contributors", label: t("nav.contributors") },
                 ].map((item) => (

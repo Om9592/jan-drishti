@@ -27,6 +27,7 @@ export function Footer({ lang }: { lang: Lang }) {
         { href: "/contribute", label: t("nav.writeForUs") },
         { href: "/contributors", label: t("nav.contributors") },
         { href: "/latest", label: t("nav.latest") },
+        { href: "/ask", label: t("nav.ask") },
         { href: "/fact-check", label: t("nav.factCheck") },
         { href: "/states", label: t("nav.states") },
       ],

@@ -46,3 +46,6 @@ yarn-error.log*
 # local QA artefacts
 shot-*.png
 visual-ask.mjs
+chat-shots*.mjs
+chat-debug*.mjs
+chat-visual.mjs

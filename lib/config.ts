@@ -241,6 +241,12 @@ export const config = {
     researchRateLimit: Number(env("RESEARCH_RATE_LIMIT") ?? 10),
     /** Public self-serve AI checks per connection per hour. */
     publicCheckRateLimit: Number(env("PUBLIC_CHECK_RATE_LIMIT") ?? 6),
+    /**
+     * How long the chat checker may spend on models before it answers with what
+     * it has. Free tiers rate limit hard, and a reader will not wait three
+     * retries; the answer states what was skipped instead.
+     */
+    chatBudgetMs: Number(env("CHAT_BUDGET_MS") ?? 55_000),
   },
 } as const;
 

@@ -82,6 +82,11 @@ export default async function AiChecksPage() {
                 </div>
 
                 <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 font-sans text-[0.68rem] text-ink-muted">
+                  {check.kind === "chat" && (
+                    <span className="border border-gold-dark/40 px-1.5 py-0.5 text-[0.58rem] uppercase tracking-[0.1em] text-gold-dark">
+                      chat turn
+                    </span>
+                  )}
                   <span>{formatDateTime(check.createdAt)}</span>
                   <span>
                     {check.evidenceChecked} evidence item(s) · {check.publishers} publisher(s)

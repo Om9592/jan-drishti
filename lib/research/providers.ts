@@ -80,6 +80,12 @@ interface AiOptions {
   reasoningEffort?: string | null;
   /** Retry once with a bigger budget when the answer was cut off mid-JSON. */
   retryOnTruncation?: boolean;
+  /**
+   * Absolute epoch ms after which no further attempt may begin. Retry sleeps are
+   * skipped past this point: a reader waiting in a chat window is better served
+   * by "three models, one of which timed out" than by a four-minute wait.
+   */
+  deadline?: number;
   /** Try this provider first (used to hand the re-check to a specific model). */
   prefer?: string;
   /** Model to use only on the preferred provider — providers name models differently. */
@@ -132,7 +138,7 @@ export async function aiComplete(messages: AiMessage[], options?: AiOptions): Pr
   if (chain.length === 0) return null;
 
   const budget = options?.timeoutMs ?? 60_000;
-  const deadline = Date.now() + budget;
+  const deadline = Math.min(Date.now() + budget, options?.deadline ?? Number.POSITIVE_INFINITY);
   const failures: string[] = [];
 
   for (let index = 0; index < chain.length; index += 1) {
@@ -268,10 +274,15 @@ async function aiRequest(
 
     let response = await send();
     // Free tiers are rate limited per minute and the fleet is often busy: one
-    // short pause is usually enough, and waiting is cheaper than giving up.
+    // short pause is usually enough, and waiting is cheaper than giving up —
+    // unless the caller is on a deadline, where the next provider is cheaper.
     for (const wait of [4000, 8000]) {
       if (response.ok || (response.status !== 429 && response.status < 500)) break;
       const jitter = wait + Math.floor(Math.random() * 1500);
+      if (options?.deadline && Date.now() + jitter > options.deadline) {
+        console.warn(`[ai] ${endpoint.name} busy ${response.status} — no time left to wait, moving on`);
+        break;
+      }
       console.warn(`[ai] ${endpoint.name} busy`, response.status, `- retrying in ${jitter}ms`);
       await new Promise((resolve) => setTimeout(resolve, jitter));
       response = await send();
@@ -498,8 +509,12 @@ export async function aiFanout(
     if (coolingDown(endpoint.name)) {
       return { provider: endpoint.name, label: endpoint.label, answer: null, error: "cooling down after a recent refusal" };
     }
+    const left = options?.deadline ? Math.min(timeoutMs, options.deadline - Date.now()) : timeoutMs;
+    if (left < 5_000) {
+      return { provider: endpoint.name, label: endpoint.label, answer: null, error: "out of time budget" };
+    }
     try {
-      const answer = await attempt(endpoint, messages, { ...options, retryOnTruncation: false }, timeoutMs);
+      const answer = await attempt(endpoint, messages, { ...options, retryOnTruncation: false }, left);
       return { provider: endpoint.name, label: endpoint.label, answer };
     } catch (error) {
       if (error instanceof AiError) noteFailure(endpoint.name, error);
@@ -567,4 +582,161 @@ export async function probeProviders(only?: string, timeoutMs = 25_000): Promise
     }
   }
   return probes;
+}
+
+/**
+ * Streaming chat completion, used by the reader-facing checker so an answer types
+ * itself out instead of appearing all at once after a minute of silence.
+ *
+ * Failover differs from `aiComplete`: once a byte has been sent to the reader we
+ * cannot quietly switch providers, so a provider only counts as having answered
+ * after it produces its first token. Everything before that first token is still
+ * a normal retry.
+ */
+export async function aiStream(
+  messages: AiMessage[],
+  onDelta: (chunk: string) => void,
+  options?: AiOptions,
+): Promise<AiAnswer | null> {
+  const chain = options?.prefer
+    ? [
+        ...config.ai.chain.filter((endpoint) => endpoint.name === options.prefer),
+        ...config.ai.chain.filter((endpoint) => endpoint.name !== options.prefer),
+      ]
+    : config.ai.chain;
+  if (chain.length === 0) return null;
+
+  const budget = options?.timeoutMs ?? 90_000;
+  const deadline = Date.now() + budget;
+  const failures: string[] = [];
+
+  // A stream is only worth waiting on if the first token arrives promptly; a
+  // provider that stalls would otherwise hold the reader's connection open.
+  const firstTokenMs = options?.timeoutMs ? Math.min(45_000, budget) : 25_000;
+
+  for (const endpoint of chain) {
+    if (coolingDown(endpoint.name)) {
+      failures.push(`${endpoint.name}: cooling down after a refusal`);
+      continue;
+    }
+    const remaining = deadline - Date.now();
+    if (remaining < 6_000) {
+      failures.push(`${endpoint.name}: out of time`);
+      break;
+    }
+
+    const model = options?.model ?? endpoint.model;
+    const requestedEffort =
+      options?.reasoningEffort === undefined ? config.ai.reasoningEffort : options.reasoningEffort;
+    const reasoningEffort =
+      requestedEffort === "minimal" && endpoint.keyless ? "low" : requestedEffort;
+
+    const controller = new AbortController();
+    const deadlineTimer = setTimeout(() => controller.abort(), Math.min(remaining, budget));
+    let firstTokenTimer = setTimeout(() => controller.abort(), firstTokenMs);
+
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+      Accept: "text/event-stream",
+    };
+    if (endpoint.apiKey) headers.Authorization = `Bearer ${endpoint.apiKey}`;
+
+    try {
+      const response = await fetch(`${endpoint.baseUrl}/chat/completions`, {
+        method: "POST",
+        headers,
+        signal: controller.signal,
+        body: JSON.stringify({
+          model,
+          messages,
+          temperature: options?.temperature ?? 0.4,
+          max_tokens: options?.maxTokens ?? 900,
+          stream: true,
+          ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
+        }),
+      });
+
+      if (!response.ok || !response.body) {
+        const body = await response.text().catch(() => "");
+        console.error(`[ai:stream] ${endpoint.name} error`, response.status, body.slice(0, 300));
+        let error: AiError;
+        if (response.status === 401 || response.status === 403) {
+          error = new AiError("The provider rejected the API key.", response.status);
+        } else if (response.status === 402 || response.status === 429) {
+          const retryAfter = Number((body.match(/retry after (\d+)\s*s/i) ?? [])[1] ?? NaN);
+          error = new AiError(
+            /free_tier|free tier/i.test(body)
+              ? "The provider's free-tier daily quota is exhausted."
+              : /FREE_LIMIT/i.test(body)
+                ? "The keyless endpoint allows one answer every 45 seconds and is cooling down."
+                : "The provider is rate limiting this key.",
+            response.status,
+            Number.isFinite(retryAfter) ? retryAfter * 1000 : undefined,
+          );
+        } else {
+          error = new AiError(`The provider returned HTTP ${response.status}.`, response.status);
+        }
+        noteFailure(endpoint.name, error);
+        failures.push(`${endpoint.name}: ${error.message}`);
+        continue;
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let text = "";
+      let started = false;
+      let finished = false;
+
+      while (!finished) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+        for (const raw of lines) {
+          const line = raw.trim();
+          if (!line.startsWith("data:")) continue;
+          const payload = line.slice(5).trim();
+          if (!payload || payload === "[DONE]") {
+            finished = payload === "[DONE]";
+            continue;
+          }
+          try {
+            const parsed = JSON.parse(payload) as {
+              choices?: { delta?: { content?: string | null }; finish_reason?: string | null }[];
+            };
+            const delta = parsed.choices?.[0]?.delta?.content;
+            if (delta) {
+              if (!started) {
+                started = true;
+                clearTimeout(firstTokenTimer);
+              }
+              text += delta;
+              onDelta(delta);
+            }
+          } catch {
+            // A provider may interleave keep-alives; ignore anything unparseable.
+          }
+        }
+      }
+      reader.cancel().catch(() => {});
+
+      if (text.trim().length === 0) {
+        failures.push(`${endpoint.name}: streamed nothing`);
+        continue;
+      }
+      return { text, model, provider: endpoint.name };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(`[ai:stream] ${endpoint.name} failed`, message);
+      failures.push(`${endpoint.name}: ${message}`);
+    } finally {
+      clearTimeout(deadlineTimer);
+      clearTimeout(firstTokenTimer);
+    }
+  }
+
+  console.error("[ai:stream] no provider could stream an answer", failures.join(" | "));
+  return null;
 }
